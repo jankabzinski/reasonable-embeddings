@@ -44,12 +44,12 @@ done
 if [ build/factpp.cpp -nt build/factpp.o ]; then
 	echo "build build/factpp.cpp"
 	# -Wp,-w silences the ("unlikely" redefined) preprocessor warning
-	$CXX $CPYFLAGS -Wp,-w -o build/factpp.o build/factpp.cpp &
+	$CXX $CPYFLAGS -c -Wp,-w -o build/factpp.o build/factpp.cpp &
 fi
 
 if [ build/owlfun.c -nt build/owlfun.o ]; then
 	echo "build build/owlfun.c"
-	$CC $CPYFLAGS -o build/owlfun.o build/owlfun.c &
+	$CC $CPYFLAGS -c -o build/owlfun.o build/owlfun.c &
 fi
 
 wait
