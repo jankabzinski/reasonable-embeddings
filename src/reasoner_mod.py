@@ -10,7 +10,7 @@ from src.simplefact.syntax import *
 from src.utils import *
 from src.vis import *
 
-def core(expr):
+def core_mod(expr):
 	if isinstance(expr, int) or expr == TOP or expr == BOT:
 		return expr
 	if expr[0] == NOT:
@@ -20,35 +20,33 @@ def core(expr):
 		if inner == BOT:
 			return TOP
 		if isinstance(inner, tuple):
-			if inner[0] == NOT:
-				return core(inner[1])
 			if inner[0] == OR:
-				return AND, core((NOT, inner[1])), core((NOT, inner[2]))
+				return AND, core_mod((NOT, inner[1])), core_mod((NOT, inner[2]))
 			if inner[0] == ALL:
-				return ANY, inner[1], core((NOT, inner[2]))
-		return NOT, core(inner)
+				return ANY, inner[1], core_mod((NOT, inner[2]))
+		return NOT, core_mod(inner)
 	if expr[0] == OR:
 		assert len(expr) == 3
-		return NOT, (AND, core((NOT, expr[1])), core((NOT, expr[2])))
+		return NOT, (AND, core_mod((NOT, expr[1])), core_mod((NOT, expr[2])))
 	if expr[0] == AND:
 		assert len(expr) == 3
-		return expr[0], core(expr[1]), core(expr[2])
+		return expr[0], core_mod(expr[1]), core_mod(expr[2])
 	if expr[0] == ALL:
-		return NOT, (ANY, expr[1], core((NOT, expr[2])))
+		return NOT, (ANY, expr[1], core_mod((NOT, expr[2])))
 	if expr[0] == ANY:
-		return expr[0], expr[1], core(expr[2])
+		return expr[0], expr[1], core_mod(expr[2])
 	if expr[0] == SUB:
-		return expr[0], core(expr[1]), core(expr[2])
+		return expr[0], core_mod(expr[1]), core_mod(expr[2])
 	if expr[0] == DIS:
 		assert len(expr) == 3
-		return SUB, (AND, core(expr[1]), core(expr[2])), BOT
+		return SUB, (AND, core_mod(expr[1]), core_mod(expr[2])), BOT
 	assert False, f'bad expression {expr}'
 
-def im(c, d):
+def im_mod(c, d):
 	cxd = T.outer(c, d).view(-1)
 	return T.cat((c, d, cxd))
 
-class NeuralReasoner(nn.Module):
+class ModifiedNeuralReasoner(nn.Module):
 	def __init__(self, head=None, embs=None, emb_size=None, onto=None, hidden_size=None, hidden_count=1, seed=None):
 		super().__init__()
 		with T.random.fork_rng(enabled=seed is not None):
@@ -66,23 +64,23 @@ class NeuralReasoner(nn.Module):
 
 			if embs is None:
 				assert onto is not None
-				self.embs = EmbeddingLayer.from_onto(onto, emb_size=emb_size)
+				self.embs = ModifiedEmbeddingLayer.from_onto(onto, emb_size=emb_size)
 
 			if head is None:
-				self.head = ReasonerHead(emb_size=emb_size, hidden_size=hidden_size, hidden_count=hidden_count)
+				self.head = ModifiedReasonerHead(emb_size=emb_size, hidden_size=hidden_size, hidden_count=hidden_count)
 
 			assert self.head.emb_size == self.embs.emb_size
 
 	def encode(self, expr):
-		return self.head.encode(core(expr), self.embs).detach().numpy()
+		return self.head.encode(core_mod(expr), self.embs).detach().numpy()
 
 	def check(self, axiom):
-		return T.sigmoid(self.head.classify_batch([core(axiom)], [self.embs]))[0].item()
+		return T.sigmoid(self.head.classify_batch([core_mod(axiom)], [self.embs]))[0].item()
 
 	def check_sub(self, c, d):
 		return self.check((SUB, c, d))
 
-class EmbeddingLayer(nn.Module):
+class ModifiedEmbeddingLayer(nn.Module):
 	def __init__(self, *, emb_size, n_concepts, n_roles):
 		super().__init__()
 		self.n_concepts = n_concepts
@@ -100,7 +98,7 @@ class EmbeddingLayer(nn.Module):
 	def from_ontos(cls, ontos, *args, **kwargs):
 		return [cls.from_onto(onto, *args, **kwargs) for onto in ontos]
 
-class ReasonerHead(nn.Module):
+class ModifiedReasonerHead(nn.Module):
 	def __init__(self, *, emb_size, hidden_size, hidden_count=1):
 		super().__init__()
 		self.hidden_size, self.emb_size = hidden_size, emb_size
@@ -134,7 +132,7 @@ class ReasonerHead(nn.Module):
 			elif expr[0] == AND:
 				c = rec(expr[1])
 				d = rec(expr[2])
-				return self.rvnn_act(self.and_nn(im(c, d)))
+				return self.rvnn_act(self.and_nn(im_mod(c, d)))
 			elif expr[0] == NOT:
 				c = rec(expr[1])
 				return self.rvnn_act(self.not_nn(c))
@@ -145,7 +143,7 @@ class ReasonerHead(nn.Module):
 			elif expr[0] == SUB:
 				c = rec(expr[1])
 				d = rec(expr[2])
-				return self.sub_nn(im(c, d))
+				return self.sub_nn(im_mod(c, d))
 			else:
 				assert False, f'Unsupported expression {expr}. Did you convert it to core form?'
 		return rec(axiom)
@@ -169,7 +167,7 @@ def batch_stats(Y, y, **other):
 def eval_batch(reasoner, encoders, X, y, onto_idx, indices=None, *, backward=False, detach=True):
 	if indices is None: indices = list(range(len(X)))
 	emb = [encoders[onto_idx[i]] for i in indices]
-	X_ = [core(X[i]) for i in indices]
+	X_ = [core_mod(X[i]) for i in indices]
 	y_ = T.tensor([float(y[i]) for i in indices]).unsqueeze(1)
 	Y_ = reasoner.classify_batch(X_, emb)
 	loss = F.binary_cross_entropy_with_logits(Y_, y_, reduction='mean')
