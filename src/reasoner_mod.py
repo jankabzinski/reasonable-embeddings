@@ -167,7 +167,7 @@ class ModifiedReasonerHead(nn.Module):
 		not_twice = reasoner.not_nn(not_out)
 		loss_diff = F.mse_loss(not_out, orig)
 		loss_recover = F.mse_loss(not_twice, orig)
-		return loss_recover + (1 - loss_diff)/5  # Minimize recovery loss and maximize difference
+		return loss_recover + (1 - loss_diff)/10  # Minimize recovery loss and maximize difference
 
 	def classify_batch(self, axioms, embeddings):
 		encoded_outputs = [self.encode(axiom, emb) for axiom, emb in zip(axioms, embeddings)]
