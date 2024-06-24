@@ -10,3 +10,7 @@ local/*
 local/out/*
 !local/out/dataset
 !local/out/img
+scripts/build
+encoder.txt
+reasoner.txt
+scripts/build
