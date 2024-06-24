@@ -98,13 +98,14 @@ class ModifiedEmbeddingLayer(nn.Module):
 	def from_ontos(cls, ontos, *args, **kwargs):
 		return [cls.from_onto(onto, *args, **kwargs) for onto in ontos]
 
-# class OrthogonalLinear(nn.Linear):
-# 	def forward(self, input):
-# 		W = self.weight
-# 		WtW = W.t() @ W
-# 		identity = T.eye(W.size(1), device=W.device)
-# 		self.orthogonal_penalty = F.mse_loss(WtW, identity)
-# 		return F.linear(input, W, self.bias)
+class InvolutiveLinear(nn.Linear):
+	def forward(self, input):
+		return F.linear(input, self.weight, self.bias)
+
+	def involutive_loss(self):
+		identity = T.eye(self.weight.size(0), device=self.weight.device)
+		W_squared = T.matmul(self.weight, self.weight)
+		return F.mse_loss(W_squared, identity)
 
 class ModifiedReasonerHead(nn.Module):
 	def __init__(self, *, emb_size, hidden_size, hidden_count=1):
@@ -112,7 +113,7 @@ class ModifiedReasonerHead(nn.Module):
 		self.hidden_size, self.emb_size = hidden_size, emb_size
 		self.bot_concept = nn.Parameter(T.zeros((1, emb_size)))
 		self.top_concept = nn.Parameter(T.zeros((1, emb_size)))
-		self.not_nn = nn.Linear(emb_size, emb_size)
+		self.not_nn = InvolutiveLinear(emb_size, emb_size)
 		self.and_nn = nn.Linear(2*emb_size + emb_size**2, emb_size)
 
 		sub_nn = [nn.Linear(2*emb_size + emb_size**2, hidden_size)]
@@ -160,15 +161,13 @@ class ModifiedReasonerHead(nn.Module):
 				assert False, f'Unsupported expression {expr}. Did you convert it to core form?'
 		return rec(axiom), not_nn_outputs
 	
-	def not_loss(self, output):
-		original = output[0]
-		not_once = output[1]
-		not_twice = self.not_nn(not_once)
-		
-		identity_loss = F.mse_loss(not_twice, original)
-		difference_loss = 1 / (F.mse_loss(not_once, original) + 1e-6)
-		
-		return identity_loss + difference_loss
+	def not_loss(self, output,reasoner):
+		orig = output[0]
+		not_out = output[1]
+		not_twice = reasoner.not_nn(not_out)
+		loss_diff = F.mse_loss(not_out, orig)
+		loss_recover = F.mse_loss(not_twice, orig)
+		return loss_recover + (1 - loss_diff)/5  # Minimize recovery loss and maximize difference
 
 	def classify_batch(self, axioms, embeddings):
 		encoded_outputs = [self.encode(axiom, emb) for axiom, emb in zip(axioms, embeddings)]
@@ -201,7 +200,7 @@ def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward
 	not_losses = [0] * len(not_ouptuts)
 	for i, outs in enumerate(not_ouptuts):
 		if outs:
-			not_losses[i] = sum(reasoner.not_loss(ne) for ne in outs) / len(outs)
+			not_losses[i] = sum(reasoner.not_loss(ne, reasoner) for ne in outs) / len(outs)
 	
 	not_loss = not_nn_loss_weight * (sum(not_losses) / len(not_losses))
 

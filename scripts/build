@@ -3,10 +3,10 @@
 function panic { echo $1; exit 1; }
 
 PARALLEL=true
-CC="gcc"
-CXX="g++"
+CC="gcc-12"
+CXX="g++-12"
 
-for cmd in cython $CC $CXX; do
+for cmd in cython3 $CC $CXX; do
 	command -v "$cmd" &>/dev/null || panic "fatal error: $cmd is not installed"
 done
 
@@ -23,13 +23,13 @@ CXX="$CXX --std=c++11"
 mkdir -p build/kernel
 
 if [ src/simplefact/factpp.pyx -nt build/factpp.cpp ]; then
-	echo "cythonize src/simplefact/factpp.pyx"
-	cython --cplus -3 src/simplefact/factpp.pyx -o build/factpp.cpp
+	echo "cython3ize src/simplefact/factpp.pyx"
+	cython3 --cplus -3 src/simplefact/factpp.pyx -o build/factpp.cpp
 fi
 
 if [ src/simplefact/owlfun.pyx -nt build/owlfun.c ]; then
-	echo "cythonize src/simplefact/owlfun.pyx"
-	cython -3 src/simplefact/owlfun.pyx -o build/owlfun.c
+	echo "cython3ize src/simplefact/owlfun.pyx"
+	cython3 -3 src/simplefact/owlfun.pyx -o build/owlfun.c
 fi
 
 for c in factplusplus/Kernel/*.cpp; do
