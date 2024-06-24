@@ -98,6 +98,14 @@ class ModifiedEmbeddingLayer(nn.Module):
 	def from_ontos(cls, ontos, *args, **kwargs):
 		return [cls.from_onto(onto, *args, **kwargs) for onto in ontos]
 
+# class OrthogonalLinear(nn.Linear):
+# 	def forward(self, input):
+# 		W = self.weight
+# 		WtW = W.t() @ W
+# 		identity = T.eye(W.size(1), device=W.device)
+# 		self.orthogonal_penalty = F.mse_loss(WtW, identity)
+# 		return F.linear(input, W, self.bias)
+
 class ModifiedReasonerHead(nn.Module):
 	def __init__(self, *, emb_size, hidden_size, hidden_count=1):
 		super().__init__()
@@ -122,6 +130,8 @@ class ModifiedReasonerHead(nn.Module):
 		nn.init.xavier_normal_(self.top_concept)
 			
 	def encode(self, axiom, embeddings):
+		not_nn_outputs = []
+
 		def rec(expr):
 			if expr == TOP:
 				return self.rvnn_act(self.top_concept[0])
@@ -135,7 +145,9 @@ class ModifiedReasonerHead(nn.Module):
 				return self.rvnn_act(self.and_nn(im_mod(c, d)))
 			elif expr[0] == NOT:
 				c = rec(expr[1])
-				return self.rvnn_act(self.not_nn(c))
+				not_nn_out = self.rvnn_act(self.not_nn(c))
+				not_nn_outputs.append([c, not_nn_out])
+				return not_nn_out
 			elif expr[0] == ANY:
 				c = rec(expr[2])
 				r = embeddings.roles[expr[1]]
@@ -146,15 +158,28 @@ class ModifiedReasonerHead(nn.Module):
 				return self.sub_nn(im_mod(c, d))
 			else:
 				assert False, f'Unsupported expression {expr}. Did you convert it to core form?'
-		return rec(axiom)
+		return rec(axiom), not_nn_outputs
 	
+	def not_loss(self, output):
+		original = output[0]
+		not_once = output[1]
+		not_twice = self.not_nn(not_once)
+		
+		identity_loss = F.mse_loss(not_twice, original)
+		difference_loss = 1 / (F.mse_loss(not_once, original) + 1e-6)
+		
+		return identity_loss + difference_loss
+
 	def classify_batch(self, axioms, embeddings):
-		return T.vstack([self.encode(axiom, emb) for axiom, emb in zip(axioms, embeddings)])
+		encoded_outputs = [self.encode(axiom, emb) for axiom, emb in zip(axioms, embeddings)]
+		final_outputs = T.vstack([out[0] for out in encoded_outputs])
+		not_nn_embeddings = [out[1] for out in encoded_outputs]
+		return final_outputs, not_nn_embeddings
 	
 	def classify(self, axiom, emb):
 		return self.classify_batch([axiom], [emb])[0].item()
 
-def batch_stats(Y, y, **other):
+def batch_stats_mod(Y, y, **other):
 	K = np.array(Y) > 0.5
 	roc_auc = metrics.roc_auc_score(y, Y)
 	pr_auc = metrics.average_precision_score(y, Y)
@@ -164,28 +189,41 @@ def batch_stats(Y, y, **other):
 	recall = metrics.recall_score(y, K)
 	return dict(acc=acc, f1=f1, prec=prec, recall=recall, roc_auc=roc_auc, pr_auc=pr_auc, **other)
 
-def eval_batch(reasoner, encoders, X, y, onto_idx, indices=None, *, backward=False, detach=True):
+
+def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward=False, detach=True, not_nn_loss_weight=0.05):
 	if indices is None: indices = list(range(len(X)))
 	emb = [encoders[onto_idx[i]] for i in indices]
 	X_ = [core_mod(X[i]) for i in indices]
 	y_ = T.tensor([float(y[i]) for i in indices]).unsqueeze(1)
-	Y_ = reasoner.classify_batch(X_, emb)
-	loss = F.binary_cross_entropy_with_logits(Y_, y_, reduction='mean')
+	Y_, not_ouptuts = reasoner.classify_batch(X_, emb)
+	main_loss = F.binary_cross_entropy_with_logits(Y_, y_, reduction='mean')
+	
+	not_losses = [0] * len(not_ouptuts)
+	for i, outs in enumerate(not_ouptuts):
+		if outs:
+			not_losses[i] = sum(reasoner.not_loss(ne) for ne in outs) / len(outs)
+	
+	not_loss = not_nn_loss_weight * (sum(not_losses) / len(not_losses))
+
+	loss = main_loss + not_loss
+
 	if backward:
 		loss.backward()
+
 	Y_ = T.sigmoid(Y_)
 	if detach:
 		loss = loss.item()
 		y_ = y_.detach().numpy().reshape(-1)
 		Y_ = Y_.detach().numpy().reshape(-1)
+	
 	return loss, list(y_), list(Y_)
 
-def train(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_size=32, logger=None, validate=True,
-		optimizer=T.optim.AdamW, lr_reasoner=0.0001, lr_encoder=0.0002, freeze_reasoner=False, run_name='train'):
+def train_mod(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_size=32, logger=None, validate=True,
+			  optimizer=T.optim.AdamW, lr_reasoner=0.0001, lr_encoder=0.0002, freeze_reasoner=False, run_name='train', not_nn_loss_weight=0.05):
 	idx_tr, X_tr, y_tr = data_tr
 	idx_vl, X_vl, y_vl = data_vl if data_vl is not None else data_tr
 	if logger is None:
-		logger = TrainingLogger(validate=validate, metrics=batch_stats)
+		logger = TrainingLogger(validate=validate, metrics=batch_stats_mod)
 
 	optimizers = []
 	for encoder in encoders:
@@ -204,7 +242,7 @@ def train(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_size=32
 		for idxs in batches:
 			for optim in optimizers:
 				optim.zero_grad()
-			loss, yb, Yb = eval_batch(reasoner, encoders, X_tr, y_tr, idx_tr, idxs, backward=epoch_idx > 0)
+			loss, yb, Yb = eval_batch_mod(reasoner, encoders, X_tr, y_tr, idx_tr, idxs, backward=epoch_idx > 0, not_nn_loss_weight=not_nn_loss_weight)
 			for optim in optimizers:
 				optim.step()
 			logger.step(loss)
@@ -212,7 +250,7 @@ def train(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_size=32
 		# Validation
 		if validate:
 			with T.no_grad():
-				val_loss, yb, Yb = eval_batch(reasoner, encoders, X_vl, y_vl, idx_vl)
+				val_loss, yb, Yb = eval_batch_mod(reasoner, encoders, X_vl, y_vl, idx_vl, not_nn_loss_weight=not_nn_loss_weight)
 				logger.step_validate(val_loss, yb, Yb, idx_vl)
 
 		logger.end_epoch()
