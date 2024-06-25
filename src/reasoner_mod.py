@@ -98,14 +98,22 @@ class ModifiedEmbeddingLayer(nn.Module):
 	def from_ontos(cls, ontos, *args, **kwargs):
 		return [cls.from_onto(onto, *args, **kwargs) for onto in ontos]
 
-class InvolutiveLinear(nn.Linear):
-	def forward(self, input):
-		return F.linear(input, self.weight, self.bias)
+class InvolutiveLinear(nn.Module):
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        self.weight = nn.Parameter(T.Tensor(out_features, in_features))
+        self.reset_parameters()
 
-	def involutive_loss(self):
-		identity = T.eye(self.weight.size(0), device=self.weight.device)
-		W_squared = T.matmul(self.weight, self.weight)
-		return F.mse_loss(W_squared, identity)
+    def reset_parameters(self):
+        nn.init.kaiming_uniform_(self.weight, a=np.sqrt(5))
+
+    def forward(self, input):
+        return F.linear(input, self.weight)
+
+    def involutive_loss(self):
+        identity = T.eye(self.weight.size(0), device=self.weight.device)
+        W_squared = T.matmul(self.weight, self.weight)
+        return F.mse_loss(W_squared, identity)
 
 class ModifiedReasonerHead(nn.Module):
 	def __init__(self, *, emb_size, hidden_size, hidden_count=1):
@@ -197,17 +205,21 @@ def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward
 	Y_, not_ouptuts = reasoner.classify_batch(X_, emb)
 	main_loss = F.binary_cross_entropy_with_logits(Y_, y_, reduction='mean')
 	
+	if backward:
+		main_loss.backward(retain_graph=True)
+		reasoner.not_nn.zero_grad()
+
 	not_losses = [0] * len(not_ouptuts)
 	for i, outs in enumerate(not_ouptuts):
 		if outs:
 			not_losses[i] = sum(reasoner.not_loss(ne, reasoner) for ne in outs) / len(outs)
 	
 	not_loss = not_nn_loss_weight * (sum(not_losses) / len(not_losses))
-
-	loss = main_loss + not_loss
-
+	
 	if backward:
-		loss.backward()
+		not_loss.backward()
+	
+	loss = main_loss + not_loss
 
 	Y_ = T.sigmoid(Y_)
 	if detach:
