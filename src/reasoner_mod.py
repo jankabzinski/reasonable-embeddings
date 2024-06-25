@@ -99,21 +99,23 @@ class ModifiedEmbeddingLayer(nn.Module):
 		return [cls.from_onto(onto, *args, **kwargs) for onto in ontos]
 
 class InvolutiveLinear(nn.Module):
-    def __init__(self, in_features, out_features):
-        super().__init__()
-        self.weight = nn.Parameter(T.Tensor(out_features, in_features))
-        self.reset_parameters()
+	def __init__(self, in_features, out_features):
+		super().__init__()
+		self.weight = nn.Parameter(T.Tensor(out_features, in_features))
+		self.reset_parameters()
 
-    def reset_parameters(self):
-        nn.init.kaiming_uniform_(self.weight, a=np.sqrt(5))
+	def reset_parameters(self):
+		nn.init.kaiming_uniform_(self.weight, a=np.sqrt(5))
 
-    def forward(self, input):
-        return F.linear(input, self.weight)
+	def forward(self, input):
+		return F.linear(input, self.weight)
 
-    def involutive_loss(self):
-        identity = T.eye(self.weight.size(0), device=self.weight.device)
-        W_squared = T.matmul(self.weight, self.weight)
-        return F.mse_loss(W_squared, identity)
+	def involutive_loss(self, outputs):
+		identity = T.eye(self.weight.size(0), device=self.weight.device)
+		W_squared = T.matmul(self.weight, self.weight)
+		#loss_diff = (1 - F.mse_loss(outputs[0], outputs[1]))/7
+		identity_loss = F.mse_loss(W_squared, identity) 
+		return  identity_loss #+ loss_diff
 
 class ModifiedReasonerHead(nn.Module):
 	def __init__(self, *, emb_size, hidden_size, hidden_count=1):
@@ -173,9 +175,9 @@ class ModifiedReasonerHead(nn.Module):
 		orig = output[0]
 		not_out = output[1]
 		not_twice = reasoner.not_nn(not_out)
-		loss_diff = F.mse_loss(not_out, orig)
+		#loss_diff = F.mse_loss(not_out, orig)
 		loss_recover = F.mse_loss(not_twice, orig)
-		return loss_recover + (1 - loss_diff)/10  # Minimize recovery loss and maximize difference
+		return loss_recover #+ (1 - loss_diff)/10  # Minimize recovery loss and maximize difference
 
 	def classify_batch(self, axioms, embeddings):
 		encoded_outputs = [self.encode(axiom, emb) for axiom, emb in zip(axioms, embeddings)]
@@ -202,23 +204,25 @@ def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward
 	emb = [encoders[onto_idx[i]] for i in indices]
 	X_ = [core_mod(X[i]) for i in indices]
 	y_ = T.tensor([float(y[i]) for i in indices]).unsqueeze(1)
-	Y_, not_ouptuts = reasoner.classify_batch(X_, emb)
+	Y_, not_outputs = reasoner.classify_batch(X_, emb)
 	main_loss = F.binary_cross_entropy_with_logits(Y_, y_, reduction='mean')
 	
 	if backward:
 		main_loss.backward(retain_graph=True)
 		reasoner.not_nn.zero_grad()
 
-	not_losses = [0] * len(not_ouptuts)
-	for i, outs in enumerate(not_ouptuts):
+	not_losses = []
+	for outs in not_outputs:
 		if outs:
-			not_losses[i] = sum(reasoner.not_loss(ne, reasoner) for ne in outs) / len(outs)
+			not_losses.append(T.stack([reasoner.not_loss(ne,reasoner) for ne in outs]).mean())
 	
-	not_loss = not_nn_loss_weight * (sum(not_losses) / len(not_losses))
-	
-	if backward:
-		not_loss.backward()
-	
+	if not_losses:
+		not_loss = T.stack(not_losses).mean()
+		if backward:
+			not_loss.backward()
+	else:
+		not_loss = T.tensor(0.0, device=Y_.device, requires_grad=False)
+		
 	loss = main_loss + not_loss
 
 	Y_ = T.sigmoid(Y_)
