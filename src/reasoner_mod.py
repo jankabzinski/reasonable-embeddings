@@ -207,9 +207,9 @@ def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward
 	Y_, not_outputs = reasoner.classify_batch(X_, emb)
 	main_loss = F.binary_cross_entropy_with_logits(Y_, y_, reduction='mean')
 	
-	if backward:
-		main_loss.backward(retain_graph=True)
-		reasoner.not_nn.zero_grad()
+	# if backward:
+	# 	main_loss.backward(retain_graph=True)
+	# 	reasoner.not_nn.zero_grad()
 
 	not_losses = []
 	for outs in not_outputs:
@@ -218,12 +218,12 @@ def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward
 	
 	if not_losses:
 		not_loss = T.stack(not_losses).mean()
-		if backward:
-			not_loss.backward()
 	else:
 		not_loss = T.tensor(0.0, device=Y_.device, requires_grad=False)
 		
-	loss = main_loss + not_loss
+	loss = main_loss + not_loss * not_nn_loss_weight
+	if backward:
+		loss.backward()
 
 	Y_ = T.sigmoid(Y_)
 	if detach:
