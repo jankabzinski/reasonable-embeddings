@@ -110,12 +110,11 @@ class InvolutiveLinear(nn.Module):
 	def forward(self, input):
 		return F.linear(input, self.weight)
 
-	def involutive_loss(self, outputs):
-		identity = T.eye(self.weight.size(0), device=self.weight.device)
-		W_squared = T.matmul(self.weight, self.weight)
-		#loss_diff = (1 - F.mse_loss(outputs[0], outputs[1]))/7
-		identity_loss = F.mse_loss(W_squared, identity) 
-		return  identity_loss #+ loss_diff
+	# def involutive_loss(self, outputs):
+	# 	identity = T.eye(self.weight.size(0), device=self.weight.device)
+	# 	W_squared = T.matmul(self.weight, self.weight)
+	# 	identity_loss = F.mse_loss(W_squared, identity) 
+	# 	return  identity_loss
 
 class ModifiedReasonerHead(nn.Module):
 	def __init__(self, *, emb_size, hidden_size, hidden_count=1):
@@ -135,14 +134,13 @@ class ModifiedReasonerHead(nn.Module):
 		self.sub_nn = nn.Sequential(*sub_nn)
 
 		self.rvnn_act = lambda x: x
-		#self.rvnn_act = T.tanh
 
 		nn.init.xavier_normal_(self.bot_concept)
 		nn.init.xavier_normal_(self.top_concept)
 			
 	def encode(self, axiom, embeddings):
 		not_nn_outputs = []
-
+		and_inputs = []
 		def rec(expr):
 			if expr == TOP:
 				return self.rvnn_act(self.top_concept[0])
@@ -153,6 +151,8 @@ class ModifiedReasonerHead(nn.Module):
 			elif expr[0] == AND:
 				c = rec(expr[1])
 				d = rec(expr[2])
+				and_inputs.append(c)
+				and_inputs.append(d)
 				return self.rvnn_act(self.and_nn(im_mod(c, d)))
 			elif expr[0] == NOT:
 				c = rec(expr[1])
@@ -169,21 +169,32 @@ class ModifiedReasonerHead(nn.Module):
 				return self.sub_nn(im_mod(c, d))
 			else:
 				assert False, f'Unsupported expression {expr}. Did you convert it to core form?'
-		return rec(axiom), not_nn_outputs
+		return rec(axiom), not_nn_outputs, and_inputs
 	
-	def not_loss(self, output,reasoner):
+	def not_loss(self, output):
 		orig = output[0]
 		not_out = output[1]
-		not_twice = reasoner.not_nn(not_out)
-		#loss_diff = F.mse_loss(not_out, orig)
+		not_twice = self.not_nn(not_out)
 		loss_recover = F.mse_loss(not_twice, orig)
-		return loss_recover #+ (1 - loss_diff)/10  # Minimize recovery loss and maximize difference
+		return loss_recover
+
+	def and_loss(self, outputs):
+		outputs = [item for sublist in outputs if sublist for item in sublist]
+
+		loss = 0.0
+		for output in outputs:
+			loss += F.mse_loss(output, self.and_nn(im_mod(output, output))).item() #* 3
+			# + F.mse_loss(self.bot_concept[0], self.and_nn(im_mod(self.bot_concept[0], output))) + 
+			# F.mse_loss(output, self.and_nn(im_mod(self.top_concept[0], output)))).item()
+
+		return T.tensor(loss/len(outputs), requires_grad = True)
 
 	def classify_batch(self, axioms, embeddings):
 		encoded_outputs = [self.encode(axiom, emb) for axiom, emb in zip(axioms, embeddings)]
 		final_outputs = T.vstack([out[0] for out in encoded_outputs])
 		not_nn_embeddings = [out[1] for out in encoded_outputs]
-		return final_outputs, not_nn_embeddings
+		and_inputs = [out[2] for out in encoded_outputs]
+		return final_outputs, not_nn_embeddings, and_inputs
 	
 	def classify(self, axiom, emb):
 		return self.classify_batch([axiom], [emb])[0].item()
@@ -199,12 +210,12 @@ def batch_stats_mod(Y, y, **other):
 	return dict(acc=acc, f1=f1, prec=prec, recall=recall, roc_auc=roc_auc, pr_auc=pr_auc, **other)
 
 
-def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward=False, detach=True, not_nn_loss_weight=0.05):
+def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward=False, detach=True, not_nn_loss_weight=25, and_nn_loss_weight=12):
 	if indices is None: indices = list(range(len(X)))
 	emb = [encoders[onto_idx[i]] for i in indices]
 	X_ = [core_mod(X[i]) for i in indices]
 	y_ = T.tensor([float(y[i]) for i in indices]).unsqueeze(1)
-	Y_, not_outputs = reasoner.classify_batch(X_, emb)
+	Y_, not_outputs, and_inputs = reasoner.classify_batch(X_, emb)
 	main_loss = F.binary_cross_entropy_with_logits(Y_, y_, reduction='mean')
 	
 	# if backward:
@@ -214,14 +225,16 @@ def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward
 	not_losses = []
 	for outs in not_outputs:
 		if outs:
-			not_losses.append(T.stack([reasoner.not_loss(ne,reasoner) for ne in outs]).mean())
+			not_losses.append(T.stack([reasoner.not_loss(ne) for ne in outs]).mean())
 	
 	if not_losses:
 		not_loss = T.stack(not_losses).mean()
 	else:
 		not_loss = T.tensor(0.0, device=Y_.device, requires_grad=False)
-		
-	loss = main_loss + not_loss * not_nn_loss_weight
+	
+	and_loss = reasoner.and_loss(and_inputs)
+
+	loss = main_loss + not_loss * not_nn_loss_weight + and_loss * and_nn_loss_weight
 	if backward:
 		loss.backward()
 
@@ -234,7 +247,7 @@ def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward
 	return loss, list(y_), list(Y_)
 
 def train_mod(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_size=32, logger=None, validate=True,
-			  optimizer=T.optim.AdamW, lr_reasoner=0.0001, lr_encoder=0.0002, freeze_reasoner=False, run_name='train', not_nn_loss_weight=0.05):
+			  optimizer=T.optim.AdamW, lr_reasoner=0.0001, lr_encoder=0.0002, freeze_reasoner=False, run_name='train', not_nn_loss_weight=25, and_nn_loss_weight=12):
 	idx_tr, X_tr, y_tr = data_tr
 	idx_vl, X_vl, y_vl = data_vl if data_vl is not None else data_tr
 	if logger is None:
@@ -257,7 +270,7 @@ def train_mod(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_siz
 		for idxs in batches:
 			for optim in optimizers:
 				optim.zero_grad()
-			loss, yb, Yb = eval_batch_mod(reasoner, encoders, X_tr, y_tr, idx_tr, idxs, backward=epoch_idx > 0, not_nn_loss_weight=not_nn_loss_weight)
+			loss, yb, Yb = eval_batch_mod(reasoner, encoders, X_tr, y_tr, idx_tr, idxs, backward=epoch_idx > 0, not_nn_loss_weight=not_nn_loss_weight, and_nn_loss_weight=and_nn_loss_weight)
 			for optim in optimizers:
 				optim.step()
 			logger.step(loss)
