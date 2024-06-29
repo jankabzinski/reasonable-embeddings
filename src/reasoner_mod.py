@@ -122,8 +122,16 @@ class ModifiedReasonerHead(nn.Module):
 		self.hidden_size, self.emb_size = hidden_size, emb_size
 		self.bot_concept = nn.Parameter(T.zeros((1, emb_size)))
 		self.top_concept = nn.Parameter(T.zeros((1, emb_size)))
-		self.not_nn = InvolutiveLinear(emb_size, emb_size)
-		self.and_nn = nn.Linear(2*emb_size + emb_size**2, emb_size)
+		self.not_nn = nn.Linear(emb_size, emb_size, bias=False)
+		
+		and_nn = [nn.Linear(2*emb_size + emb_size**2, hidden_size)]
+		for _ in range(hidden_count - 1):
+			and_nn.append(nn.ELU())
+			and_nn.append(nn.Linear(hidden_size, hidden_size))
+		and_nn.append(nn.ELU())
+		and_nn.append(nn.Linear(hidden_size, emb_size))
+		self.and_nn = nn.Sequential(*and_nn)
+
 
 		sub_nn = [nn.Linear(2*emb_size + emb_size**2, hidden_size)]
 		for _ in range(hidden_count - 1):
@@ -178,14 +186,14 @@ class ModifiedReasonerHead(nn.Module):
 		loss_recover = F.mse_loss(not_twice, orig)
 		return loss_recover
 
-	def and_loss(self, outputs):
+	def and_loss(self, outputs, train_top_bot):
 		outputs = [item for sublist in outputs if sublist for item in sublist]
 
 		loss = 0.0
 		for output in outputs:
-			loss += F.mse_loss(output, self.and_nn(im_mod(output, output))).item() #* 3
-			# + F.mse_loss(self.bot_concept[0], self.and_nn(im_mod(self.bot_concept[0], output))) + 
-			# F.mse_loss(output, self.and_nn(im_mod(self.top_concept[0], output)))).item()
+			loss += F.mse_loss(output, self.and_nn(im_mod(output, output))).item()
+			if train_top_bot:
+				loss+= (F.mse_loss(self.bot_concept[0], self.and_nn(im_mod(self.bot_concept[0], output))) + F.mse_loss(output, self.and_nn(im_mod(self.top_concept[0], output)))/3).item()
 
 		return T.tensor(loss/len(outputs), requires_grad = True)
 
@@ -210,17 +218,13 @@ def batch_stats_mod(Y, y, **other):
 	return dict(acc=acc, f1=f1, prec=prec, recall=recall, roc_auc=roc_auc, pr_auc=pr_auc, **other)
 
 
-def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward=False, detach=True, not_nn_loss_weight=25, and_nn_loss_weight=12):
+def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward=False, detach=True, not_nn_loss_weight=0, and_nn_loss_weight=0, train_only_and=False):
 	if indices is None: indices = list(range(len(X)))
 	emb = [encoders[onto_idx[i]] for i in indices]
 	X_ = [core_mod(X[i]) for i in indices]
 	y_ = T.tensor([float(y[i]) for i in indices]).unsqueeze(1)
 	Y_, not_outputs, and_inputs = reasoner.classify_batch(X_, emb)
 	main_loss = F.binary_cross_entropy_with_logits(Y_, y_, reduction='mean')
-	
-	# if backward:
-	# 	main_loss.backward(retain_graph=True)
-	# 	reasoner.not_nn.zero_grad()
 
 	not_losses = []
 	for outs in not_outputs:
@@ -232,7 +236,7 @@ def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward
 	else:
 		not_loss = T.tensor(0.0, device=Y_.device, requires_grad=False)
 	
-	and_loss = reasoner.and_loss(and_inputs)
+	and_loss = reasoner.and_loss(and_inputs, train_only_and)
 
 	loss = main_loss + not_loss * not_nn_loss_weight + and_loss * and_nn_loss_weight
 	if backward:
@@ -247,20 +251,25 @@ def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward
 	return loss, list(y_), list(Y_)
 
 def train_mod(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_size=32, logger=None, validate=True,
-			  optimizer=T.optim.AdamW, lr_reasoner=0.0001, lr_encoder=0.0002, freeze_reasoner=False, run_name='train', not_nn_loss_weight=25, and_nn_loss_weight=12):
+			  optimizer=T.optim.AdamW, lr_reasoner=0.0001, lr_encoder=0.0002, freeze_reasoner=False, run_name='train', not_nn_loss_weight=0, and_nn_loss_weight=0, train_only_and = False):
 	idx_tr, X_tr, y_tr = data_tr
 	idx_vl, X_vl, y_vl = data_vl if data_vl is not None else data_tr
 	if logger is None:
 		logger = TrainingLogger(validate=validate, metrics=batch_stats_mod)
 
 	optimizers = []
-	for encoder in encoders:
-		optimizers.append(optimizer(encoder.parameters(), lr=lr_encoder))
+
+	if train_only_and is False:
+		for encoder in encoders:
+			optimizers.append(optimizer(encoder.parameters(), lr=lr_encoder))
 
 	if freeze_reasoner:
 		freeze(reasoner)
-	else:
+	elif train_only_and is False:
 		optimizers.append(optimizer(reasoner.parameters(), lr=lr_reasoner))
+	
+	if train_only_and:
+		optimizers.append(optimizer(reasoner.and_nn.parameters(), lr=lr_reasoner/5))
 
 	logger.begin_run(epoch_count=epoch_count, run=run_name)
 	for epoch_idx in range(epoch_count + 1):
@@ -270,7 +279,7 @@ def train_mod(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_siz
 		for idxs in batches:
 			for optim in optimizers:
 				optim.zero_grad()
-			loss, yb, Yb = eval_batch_mod(reasoner, encoders, X_tr, y_tr, idx_tr, idxs, backward=epoch_idx > 0, not_nn_loss_weight=not_nn_loss_weight, and_nn_loss_weight=and_nn_loss_weight)
+			loss, yb, Yb = eval_batch_mod(reasoner, encoders, X_tr, y_tr, idx_tr, idxs, backward=epoch_idx > 0, not_nn_loss_weight=not_nn_loss_weight, and_nn_loss_weight=and_nn_loss_weight, train_only_and=train_only_and)
 			for optim in optimizers:
 				optim.step()
 			logger.step(loss)
@@ -278,7 +287,7 @@ def train_mod(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_siz
 		# Validation
 		if validate:
 			with T.no_grad():
-				val_loss, yb, Yb = eval_batch_mod(reasoner, encoders, X_vl, y_vl, idx_vl, not_nn_loss_weight=not_nn_loss_weight)
+				val_loss, yb, Yb = eval_batch_mod(reasoner, encoders, X_vl, y_vl, idx_vl)
 				logger.step_validate(val_loss, yb, Yb, idx_vl)
 
 		logger.end_epoch()
