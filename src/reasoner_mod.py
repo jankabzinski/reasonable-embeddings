@@ -185,8 +185,8 @@ class ModifiedReasonerHead(nn.Module):
 		for output in outputs:
 			loss += F.mse_loss(output, self.and_nn(im_mod(output, output))).item()
 			if train_top_bot:
-				loss+= (F.mse_loss(self.bot_concept[0], self.and_nn(im_mod(self.bot_concept[0], output))) + F.mse_loss(output, self.and_nn(im_mod(self.top_concept[0], output)))/3).item()
-
+				loss += ((F.mse_loss(self.bot_concept[0], self.and_nn(im_mod(self.bot_concept[0], output))) + F.mse_loss(output, self.and_nn(im_mod(self.top_concept[0], output))))*2).item()
+				loss += (F.mse_loss(self.bot_concept[0], self.and_nn(im_mod(output, self.not_nn(output))))).item()
 		if len(outputs)==0:
 			return T.tensor(0.0, requires_grad=False)
 		else:
