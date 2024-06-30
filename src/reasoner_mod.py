@@ -123,15 +123,7 @@ class ModifiedReasonerHead(nn.Module):
 		self.bot_concept = nn.Parameter(T.zeros((1, emb_size)))
 		self.top_concept = nn.Parameter(T.zeros((1, emb_size)))
 		self.not_nn = nn.Linear(emb_size, emb_size, bias=False)
-		
-		and_nn = [nn.Linear(2*emb_size + emb_size**2, hidden_size)]
-		for _ in range(hidden_count - 1):
-			and_nn.append(nn.ELU())
-			and_nn.append(nn.Linear(hidden_size, hidden_size))
-		and_nn.append(nn.ELU())
-		and_nn.append(nn.Linear(hidden_size, emb_size))
-		self.and_nn = nn.Sequential(*and_nn)
-
+		self.and_nn = nn.Linear(2*emb_size + emb_size**2, emb_size)
 
 		sub_nn = [nn.Linear(2*emb_size + emb_size**2, hidden_size)]
 		for _ in range(hidden_count - 1):
@@ -195,8 +187,16 @@ class ModifiedReasonerHead(nn.Module):
 			if train_top_bot:
 				loss+= (F.mse_loss(self.bot_concept[0], self.and_nn(im_mod(self.bot_concept[0], output))) + F.mse_loss(output, self.and_nn(im_mod(self.top_concept[0], output)))/3).item()
 
-		return T.tensor(loss/len(outputs), requires_grad = True)
+		if len(outputs)==0:
+			return T.tensor(0.0, requires_grad=False)
+		else:
+			return T.tensor(loss/len(outputs), requires_grad = True)
 
+	def top_bot_not_loss(self):
+		return T.tensor((F.mse_loss(self.not_nn(self.bot_concept[0]), self.top_concept[0]) + 
+		  F.mse_loss(self.not_nn(self.top_concept[0]), self.bot_concept[0])).item()/2, requires_grad = True)
+
+	
 	def classify_batch(self, axioms, embeddings):
 		encoded_outputs = [self.encode(axiom, emb) for axiom, emb in zip(axioms, embeddings)]
 		final_outputs = T.vstack([out[0] for out in encoded_outputs])
@@ -218,7 +218,7 @@ def batch_stats_mod(Y, y, **other):
 	return dict(acc=acc, f1=f1, prec=prec, recall=recall, roc_auc=roc_auc, pr_auc=pr_auc, **other)
 
 
-def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward=False, detach=True, not_nn_loss_weight=0, and_nn_loss_weight=0, train_only_and=False):
+def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward=False, detach=True, not_nn_loss_weight=0, and_nn_loss_weight=0, train_only_and=False, train_top_bot=False, top_bot_weight=0):
 	if indices is None: indices = list(range(len(X)))
 	emb = [encoders[onto_idx[i]] for i in indices]
 	X_ = [core_mod(X[i]) for i in indices]
@@ -236,9 +236,12 @@ def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward
 	else:
 		not_loss = T.tensor(0.0, device=Y_.device, requires_grad=False)
 	
-	and_loss = reasoner.and_loss(and_inputs, train_only_and)
+	and_loss = reasoner.and_loss(and_inputs, (train_only_and or train_top_bot))
 
-	loss = main_loss + not_loss * not_nn_loss_weight + and_loss * and_nn_loss_weight
+	tb_loss = reasoner.top_bot_not_loss() * top_bot_weight
+	
+	loss = main_loss + not_loss * not_nn_loss_weight + and_loss * and_nn_loss_weight + tb_loss
+
 	if backward:
 		loss.backward()
 
@@ -251,7 +254,8 @@ def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward
 	return loss, list(y_), list(Y_)
 
 def train_mod(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_size=32, logger=None, validate=True,
-			  optimizer=T.optim.AdamW, lr_reasoner=0.0001, lr_encoder=0.0002, freeze_reasoner=False, run_name='train', not_nn_loss_weight=0, and_nn_loss_weight=0, train_only_and = False):
+			  optimizer=T.optim.AdamW, lr_reasoner=0.0001, lr_encoder=0.0002, freeze_reasoner=False, run_name='train',
+			    not_nn_loss_weight=0, and_nn_loss_weight=0, train_only_and = False, train_top_bot=False, top_bot_weight=0):
 	idx_tr, X_tr, y_tr = data_tr
 	idx_vl, X_vl, y_vl = data_vl if data_vl is not None else data_tr
 	if logger is None:
@@ -279,7 +283,7 @@ def train_mod(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_siz
 		for idxs in batches:
 			for optim in optimizers:
 				optim.zero_grad()
-			loss, yb, Yb = eval_batch_mod(reasoner, encoders, X_tr, y_tr, idx_tr, idxs, backward=epoch_idx > 0, not_nn_loss_weight=not_nn_loss_weight, and_nn_loss_weight=and_nn_loss_weight, train_only_and=train_only_and)
+			loss, yb, Yb = eval_batch_mod(reasoner, encoders, X_tr, y_tr, idx_tr, idxs, backward=epoch_idx > 0, not_nn_loss_weight=not_nn_loss_weight, and_nn_loss_weight=and_nn_loss_weight, train_only_and=train_only_and, train_top_bot=train_top_bot, top_bot_weight=top_bot_weight)
 			for optim in optimizers:
 				optim.step()
 			logger.step(loss)
