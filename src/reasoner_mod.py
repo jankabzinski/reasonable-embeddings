@@ -98,24 +98,6 @@ class ModifiedEmbeddingLayer(nn.Module):
 	def from_ontos(cls, ontos, *args, **kwargs):
 		return [cls.from_onto(onto, *args, **kwargs) for onto in ontos]
 
-class InvolutiveLinear(nn.Module):
-	def __init__(self, in_features, out_features):
-		super().__init__()
-		self.weight = nn.Parameter(T.Tensor(out_features, in_features))
-		self.reset_parameters()
-
-	def reset_parameters(self):
-		nn.init.kaiming_uniform_(self.weight, a=np.sqrt(5))
-
-	def forward(self, input):
-		return F.linear(input, self.weight)
-
-	# def involutive_loss(self, outputs):
-	# 	identity = T.eye(self.weight.size(0), device=self.weight.device)
-	# 	W_squared = T.matmul(self.weight, self.weight)
-	# 	identity_loss = F.mse_loss(W_squared, identity) 
-	# 	return  identity_loss
-
 class ModifiedReasonerHead(nn.Module):
 	def __init__(self, *, emb_size, hidden_size, hidden_count=1):
 		super().__init__()
@@ -196,6 +178,46 @@ class ModifiedReasonerHead(nn.Module):
 		return T.tensor((F.mse_loss(self.not_nn(self.bot_concept[0]), self.top_concept[0]) + 
 		  F.mse_loss(self.not_nn(self.top_concept[0]), self.bot_concept[0])).item()/2, requires_grad = True)
 
+	def intertrain_not_and(self):
+		not_nn = self.not_nn
+		top = self.top_concept[0]
+		bot = self.bot_concept[0]
+		optimizer = T.optim.AdamW(not_nn.parameters(), 0.0001)
+
+		for i in range(30000):
+			optimizer.zero_grad()
+			input1 = T.rand(10)
+
+			loss = (F.mse_loss(input1, not_nn(not_nn(input1))))
+			loss += (F.mse_loss(top, not_nn(bot)))
+			loss += (F.mse_loss(bot, not_nn(top)))
+
+			if i % 5000==0:
+				print("loss: ", loss)
+			loss.backward()
+			optimizer.step()
+
+
+		and_nn = self.and_nn
+		optimizer = T.optim.AdamW(and_nn.parameters(), 0.0001)
+
+		for i in range(50000):
+			optimizer.zero_grad()
+			input1 = T.rand(10)
+			input2 = T.rand(10)
+			input3 = T.rand(10)
+			loss = F.mse_loss(input1, and_nn(im_mod(input1, input1)))
+			loss += F.mse_loss(bot, and_nn(im_mod(bot, input1)))
+			loss += F.mse_loss(input3, and_nn(im_mod(input3,top)))
+			loss += F.mse_loss(bot, and_nn(im_mod(input2, not_nn(input2))))
+
+			if i%10000==0:
+				print("loss: ", loss)
+			loss.backward()
+			optimizer.step()
+
+		self.and_nn = and_nn
+		self.not_nn = not_nn
 	
 	def classify_batch(self, axioms, embeddings):
 		encoded_outputs = [self.encode(axiom, emb) for axiom, emb in zip(axioms, embeddings)]
@@ -218,7 +240,7 @@ def batch_stats_mod(Y, y, **other):
 	return dict(acc=acc, f1=f1, prec=prec, recall=recall, roc_auc=roc_auc, pr_auc=pr_auc, **other)
 
 
-def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward=False, detach=True, not_nn_loss_weight=0, and_nn_loss_weight=0, train_only_and=False, train_top_bot=False, top_bot_weight=0):
+def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward=False, detach=True, not_nn_loss_weight=0, and_nn_loss_weight=0, train_top_bot=False, top_bot_weight=0):
 	if indices is None: indices = list(range(len(X)))
 	emb = [encoders[onto_idx[i]] for i in indices]
 	X_ = [core_mod(X[i]) for i in indices]
@@ -232,15 +254,15 @@ def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward
 			not_losses.append(T.stack([reasoner.not_loss(ne) for ne in outs]).mean())
 	
 	if not_losses:
-		not_loss = T.stack(not_losses).mean()
+		not_loss = T.stack(not_losses).mean() * not_nn_loss_weight
 	else:
 		not_loss = T.tensor(0.0, device=Y_.device, requires_grad=False)
 	
-	and_loss = reasoner.and_loss(and_inputs, (train_only_and or train_top_bot))
+	and_loss = reasoner.and_loss(and_inputs, train_top_bot) * and_nn_loss_weight
 
 	tb_loss = reasoner.top_bot_not_loss() * top_bot_weight
 	
-	loss = main_loss + not_loss * not_nn_loss_weight + and_loss * and_nn_loss_weight + tb_loss
+	loss = main_loss + not_loss  + and_loss + tb_loss
 
 	if backward:
 		loss.backward()
@@ -255,7 +277,7 @@ def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward
 
 def train_mod(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_size=32, logger=None, validate=True,
 			  optimizer=T.optim.AdamW, lr_reasoner=0.0001, lr_encoder=0.0002, freeze_reasoner=False, run_name='train',
-			    not_nn_loss_weight=0, and_nn_loss_weight=0, train_only_and = False, train_top_bot=False, top_bot_weight=0):
+			    not_nn_loss_weight=0, and_nn_loss_weight=0, train_top_bot=False, top_bot_weight=0):
 	idx_tr, X_tr, y_tr = data_tr
 	idx_vl, X_vl, y_vl = data_vl if data_vl is not None else data_tr
 	if logger is None:
@@ -263,18 +285,14 @@ def train_mod(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_siz
 
 	optimizers = []
 
-	if train_only_and is False:
-		for encoder in encoders:
-			optimizers.append(optimizer(encoder.parameters(), lr=lr_encoder))
+	for encoder in encoders:
+		optimizers.append(optimizer(encoder.parameters(), lr=lr_encoder))
 
 	if freeze_reasoner:
 		freeze(reasoner)
-	elif train_only_and is False:
+	else:
 		optimizers.append(optimizer(reasoner.parameters(), lr=lr_reasoner))
 	
-	if train_only_and:
-		optimizers.append(optimizer(reasoner.and_nn.parameters(), lr=lr_reasoner/5))
-
 	logger.begin_run(epoch_count=epoch_count, run=run_name)
 	for epoch_idx in range(epoch_count + 1):
 		# Training
@@ -283,7 +301,7 @@ def train_mod(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_siz
 		for idxs in batches:
 			for optim in optimizers:
 				optim.zero_grad()
-			loss, yb, Yb = eval_batch_mod(reasoner, encoders, X_tr, y_tr, idx_tr, idxs, backward=epoch_idx > 0, not_nn_loss_weight=not_nn_loss_weight, and_nn_loss_weight=and_nn_loss_weight, train_only_and=train_only_and, train_top_bot=train_top_bot, top_bot_weight=top_bot_weight)
+			loss, yb, Yb = eval_batch_mod(reasoner, encoders, X_tr, y_tr, idx_tr, idxs, backward=epoch_idx > 0, not_nn_loss_weight=not_nn_loss_weight, and_nn_loss_weight=and_nn_loss_weight, train_top_bot=train_top_bot, top_bot_weight=top_bot_weight)
 			for optim in optimizers:
 				optim.step()
 			logger.step(loss)
