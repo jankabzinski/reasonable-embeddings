@@ -164,8 +164,9 @@ class ModifiedReasonerHead(nn.Module):
 		outputs = [item for sublist in outputs if sublist for item in sublist]
 
 		loss = 0.0
-		for output in outputs:
+		for output, output2 in zip(outputs, outputs[1:]):
 			loss += F.mse_loss(output, self.and_nn(im_mod(output, output))).item()
+			loss += F.mse_loss(self.and_nn(im_mod(output, output2)), self.and_nn(im_mod(output2, output))).item()
 			if train_top_bot:
 				loss += ((F.mse_loss(self.bot_concept[0], self.and_nn(im_mod(self.bot_concept[0], output))) + F.mse_loss(output, self.and_nn(im_mod(self.top_concept[0], output))))*2).item()
 				loss += (F.mse_loss(self.bot_concept[0], self.and_nn(im_mod(output, self.not_nn(output))))).item()
