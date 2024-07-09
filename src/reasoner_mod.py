@@ -322,7 +322,8 @@ def batch_stats_mod(Y, y, **other):
 
 
 def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward=False, detach=True, not_nn_loss_weight=0, 
-				   and_nn_loss_weight=0, train_top_bot=False, top_bot_weight=0, sub_weight=0, train_identities=False):
+				   and_nn_loss_weight=0, train_top_bot=False, top_bot_weight=0, sub_weight=0, train_identities=False,
+				   identities_weight=0):
 	if indices is None: indices = list(range(len(X)))
 	emb = [encoders[onto_idx[i]] for i in indices]
 	X_ = [core_mod(X[i]) for i in indices]
@@ -361,7 +362,7 @@ def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward
 		sub_loss = T.tensor(0.0, device=Y_.device, requires_grad=False)
 
 	if train_identities:
-		identity_loss = reasoner.all_identities(encoders) / 4
+		identity_loss = reasoner.all_identities(encoders) * identities_weight
 	else:
 		identity_loss = T.tensor(0.0, device=Y_.device, requires_grad=False)
 
@@ -382,7 +383,7 @@ def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward
 def train_mod(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_size=32, logger=None, validate=True,
 			  optimizer=T.optim.AdamW, lr_reasoner=0.0001, lr_encoder=0.0002, freeze_reasoner=False, run_name='train',
 			    not_nn_loss_weight=0, and_nn_loss_weight=0, train_top_bot=False, top_bot_weight=0, sub_weight=0,
-				train_identities =False):
+				train_identities =False, identities_weight=0) :
 	idx_tr, X_tr, y_tr = data_tr
 	idx_vl, X_vl, y_vl = data_vl if data_vl is not None else data_tr
 	if logger is None:
@@ -408,7 +409,8 @@ def train_mod(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_siz
 				optim.zero_grad()
 			loss, yb, Yb = eval_batch_mod(reasoner, encoders, X_tr, y_tr, idx_tr, idxs, backward=epoch_idx > 0, 
 				not_nn_loss_weight=not_nn_loss_weight, and_nn_loss_weight=and_nn_loss_weight, train_top_bot=train_top_bot, 
-				top_bot_weight=top_bot_weight, sub_weight=sub_weight, train_identities=train_identities)
+				top_bot_weight=top_bot_weight, sub_weight=sub_weight, train_identities=train_identities,
+				identities_weight=identities_weight)
 			
 			for optim in optimizers:
 				optim.step()
