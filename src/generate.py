@@ -33,11 +33,11 @@ def AxiomGenerator(*, n_concepts, n_roles, rng, max_depth, p_atomic):
 		return gen(1)
 	
 	def random_axiom(*, max_depth=max_depth):
-		max_depth = int(rng.integers(1, max_depth+1))
+		# max_depth = int(rng.integers(1, max_depth+1))
 		op = rng.choice([SUB, DIS])
-		ld = rng.integers(1, max_depth+1)
-		rd = rng.integers(1, max(1, max_depth - ld)+1)
-		return op, random_expr(max_depth=ld), random_expr(max_depth=rd)
+		# ld = rng.integers(1, max_depth+1)
+		# rd = rng.integers(1, max(1, max_depth - ld)+1)
+		return op, random_expr(max_depth=max_depth), random_expr(max_depth=max_depth)
 		
 	return random_axiom
 

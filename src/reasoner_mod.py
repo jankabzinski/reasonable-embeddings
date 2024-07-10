@@ -148,7 +148,7 @@ class ModifiedReasonerHead(nn.Module):
 				assert False, f'Unsupported expression {expr}. Did you convert it to core form?'
 		return rec(axiom)
 	
-	def all_identities(self, encoders):
+	def all_identities(self, encoders, frozen):
 		and_nn = self.and_nn
 		bot = self.bot_concept
 		top = self.top_concept
@@ -189,13 +189,13 @@ class ModifiedReasonerHead(nn.Module):
 		loss += F.mse_loss(bot[0], and_nn(im_mod(not_nn(input3),input3)))
 
 		# A = A ⊓ T
-		loss += F.mse_loss(input1, and_nn(im_mod(input1, top[0])))
-		loss += F.mse_loss(input1, and_nn(im_mod(input2, top[0])))
-		loss += F.mse_loss(input3, and_nn(im_mod(input3, top[0])))
+		loss += F.mse_loss(input1, and_nn(im_mod(input1, top[0])))*2
+		loss += F.mse_loss(input1, and_nn(im_mod(input2, top[0])))*2
+		loss += F.mse_loss(input3, and_nn(im_mod(input3, top[0])))*2
 
-		loss += F.mse_loss(input2, and_nn(im_mod(top[0], input1)))
-		loss += F.mse_loss(input2, and_nn(im_mod(top[0], input2)))
-		loss += F.mse_loss(input2, and_nn(im_mod(top[0], input3)))
+		loss += F.mse_loss(input2, and_nn(im_mod(top[0], input1)))*2
+		loss += F.mse_loss(input2, and_nn(im_mod(top[0], input2)))*2
+		loss += F.mse_loss(input2, and_nn(im_mod(top[0], input3)))*2
 
 		# ⊥ = A ⊓ ⊥
 		loss += F.mse_loss(bot[0], and_nn(im_mod(input1, bot[0])))
@@ -206,13 +206,15 @@ class ModifiedReasonerHead(nn.Module):
 		loss += F.mse_loss(bot[0], and_nn(im_mod(bot[0], input2)))
 		loss += F.mse_loss(bot[0], and_nn(im_mod(bot[0], input3)))
 
-		loss += F.mse_loss(bot[0], and_nn(im_mod(top[0], bot[0])))
+		if not frozen:
+			loss += F.mse_loss(bot[0], and_nn(im_mod(top[0], bot[0])))
 
 		#  A ⊑ T -> True
 		loss += (1 - T.sigmoid(sub_nn(im_mod(input1, top[0])))).sum()
 		loss += (1 - T.sigmoid(sub_nn(im_mod(input2, top[0])))).sum()
 		loss += (1 - T.sigmoid(sub_nn(im_mod(input3, top[0])))).sum()
-		loss += (1 - T.sigmoid(sub_nn(im_mod(bot[0], top[0])))).sum()
+		if not frozen:
+			loss += (1 - T.sigmoid(sub_nn(im_mod(bot[0], top[0])))).sum()
 
 		#  ⊥ ⊑ A -> True
 		loss += (1 - T.sigmoid(sub_nn(im_mod(bot[0], input1)))).sum()
@@ -225,18 +227,21 @@ class ModifiedReasonerHead(nn.Module):
 		loss += (1 - T.sigmoid(sub_nn(im_mod(input3, input3)))).sum()
 
 		#  ⊥ = ¬T  
-		loss += F.mse_loss(bot[0], not_nn(top[0]))
+		if not frozen:
+			loss += F.l1_loss(bot[0], not_nn(top[0]))
 		#  T = ¬⊥
-		loss += F.mse_loss(top[0], not_nn(bot[0]))
+			loss += F.l1_loss(top[0], not_nn(bot[0]))
 
 		#  A = ¬(¬(A))
 		loss += F.mse_loss(input1, not_nn(not_nn(input1)))
 		loss += F.mse_loss(input2, not_nn(not_nn(input2)))
 		loss += F.mse_loss(input3, not_nn(not_nn(input3)))
-		loss += F.l1_loss(T.matmul(not_nn.weight, not_nn.weight), T.eye(not_nn.weight.shape[1]))
+		if not frozen:
+			loss += F.l1_loss(T.matmul(not_nn.weight, not_nn.weight), T.eye(not_nn.weight.shape[1])) * 13
 		
 		#  ⊥ ⊑ ⊥ -> True
-		loss += (1 - T.sigmoid(sub_nn(im_mod(bot[0], bot[0])))).sum()
+		if not frozen:
+			loss += (1 - T.sigmoid(sub_nn(im_mod(bot[0], bot[0])))).sum()
 
 		return loss
 
@@ -258,7 +263,7 @@ def batch_stats_mod(Y, y, **other):
 
 
 def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward=False, detach=True,
-				   identities_weight=0):
+				   identities_weight=0, frozen = False):
 	if indices is None: indices = list(range(len(X)))
 	emb = [encoders[onto_idx[i]] for i in indices]
 	X_ = [core_mod(X[i]) for i in indices]
@@ -267,7 +272,7 @@ def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward
 	main_loss = F.binary_cross_entropy_with_logits(Y_, y_, reduction='mean')
 
 	if identities_weight > 0:
-		identity_loss = reasoner.all_identities(encoders) * identities_weight
+		identity_loss = reasoner.all_identities(encoders, frozen) * identities_weight
 	else:
 		identity_loss = T.tensor(0.0, device=Y_.device, requires_grad=False)
 
@@ -312,8 +317,7 @@ def train_mod(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_siz
 			for optim in optimizers:
 				optim.zero_grad()
 			loss, yb, Yb = eval_batch_mod(reasoner, encoders, X_tr, y_tr, idx_tr, idxs, backward=epoch_idx > 0,
-				identities_weight=identities_weight)
-			
+				identities_weight=identities_weight, frozen = freeze_reasoner)
 			for optim in optimizers:
 				optim.step()
 			logger.step(loss)
