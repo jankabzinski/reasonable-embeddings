@@ -3,12 +3,15 @@ import pickle
 import json
 import signal
 import numpy as np
+import pandas as pd
 from sys import stderr
 from time import time
 
 from src.simplefact import *
 from src.simplefact.syntax import *
 from src.utils import *
+from sklearn.model_selection import train_test_split
+
 
 OP_SHORT = {NOT: 'not', AND: 'and', OR: 'or', SUB: 'sub', EQV: 'eqv', ANY: 'any', ALL: 'all', BOT: 'bot', TOP: 'top', DIS: 'dis'}
 OP_SHORT_INV = invdict(OP_SHORT)
@@ -249,6 +252,101 @@ def load_dataset(path):
 		with open(path) as f:
 			return deserialize_dataset(json.load(f))
 	assert False, 'Bad extension'
+
+def count_elements(lista):
+    stos = [lista]
+    licznik = 0
+    while stos:
+        aktualna_lista = stos.pop()
+        for element in aktualna_lista:
+            if isinstance(element, (list, tuple)):
+                stos.append(element)
+            else:
+                licznik += 1
+    return licznik
+
+def prepare_data(data_tr, data_vl, data_te, seed):
+	filtered_data_tr = []
+	filtered_data_vl = []
+	for onto, X, y in zip(data_tr[0], data_tr[1], data_tr[2]):
+		if count_elements(X) <= 4:
+			filtered_data_tr.append([onto, X, y])
+		else:
+			filtered_data_vl.append([onto, X, y])
+
+	for onto, X, y in zip(data_vl[0], data_vl[1], data_vl[2]):
+		if count_elements(X) <= 4:
+			filtered_data_tr.append([onto, X, y])
+		else:
+			filtered_data_vl.append([onto, X, y])
+
+	new_data_tr = [[], [], []]
+	for item in filtered_data_tr:
+		new_data_tr[0].append(item[0])
+		new_data_tr[1].append(item[1])
+		new_data_tr[2].append(item[2])
+
+	new_data_vl = [[], [], []]
+	for item in filtered_data_vl:
+		new_data_vl[0].append(item[0])
+		new_data_vl[1].append(item[1])
+		new_data_vl[2].append(item[2])
+	data_tr = new_data_tr
+	data_vl = new_data_vl
+
+
+	filtered_data_te_te = []
+	filtered_data_te_tr = []
+
+	for onto, X, y in zip(data_te[0], data_te[1], data_te[2]):
+		if count_elements(X) <= 4:
+			filtered_data_te_tr.append([onto, X, y])
+		else:
+			filtered_data_te_te.append([onto, X, y])
+	
+	new_data_te_te = [[], [], []]
+	for item in filtered_data_te_te:
+		new_data_te_te[0].append(item[0])
+		new_data_te_te[1].append(item[1])
+		new_data_te_te[2].append(item[2])
+
+	new_data_te_tr = [[], [], []]
+	for item in filtered_data_te_tr:
+		new_data_te_tr[0].append(item[0])
+		new_data_te_tr[1].append(item[1])
+		new_data_te_tr[2].append(item[2])
+
+	data_te_tr = new_data_te_tr
+
+	data_te_te = new_data_te_te
+
+	data_test = pd.DataFrame({
+		'ontology_id': data_te_te[0],
+		'X': data_te_te[1],
+		'y': data_te_te[2]
+	})
+
+	def stratified_group_split(data, group_col, stratify_col, test_size=0.5):
+		groups = data[group_col].unique()
+		val_idx, test_idx = [], []
+
+		for group in groups:
+			group_data = data[data[group_col] == group]
+			val_data, test_data = train_test_split(group_data, test_size=test_size, stratify=group_data[stratify_col], random_state=seed)
+
+			val_idx.extend(val_data.index)
+			test_idx.extend(test_data.index)
+
+		return data.loc[val_idx], data.loc[test_idx]
+
+	data_te_vl, data_te_te = stratified_group_split(data_test, 'ontology_id', 'y', test_size=0.5)
+	
+	X_te_val = data_te_vl['X'].tolist()
+	y_te_val = data_te_vl['y'].tolist()
+	idx_te_val = data_te_vl['ontology_id'].tolist()
+	data_te_vl = [idx_te_val, X_te_val, y_te_val] 
+
+	return data_tr, data_vl, data_te_tr, data_te_vl, data_te_te['ontology_id'].tolist(), data_te_te['X'].tolist(), data_te_te['y'].tolist()
 
 if __name__ == '__main__':
 	seed = 42

@@ -16,19 +16,18 @@ def core_mod(expr):
 		return expr
 	if expr[0] == NOT:
 		inner = expr[1]
-		if inner == TOP:
-			return BOT
-		if inner == BOT:
-			return TOP
+		# if inner == TOP:
+		# 	return BOT
+		# if inner == BOT:
+		# 	return TOP
 		if isinstance(inner, tuple):
-			if inner[0] == OR:
-				return AND, core_mod((NOT, inner[1])), core_mod((NOT, inner[2]))
 			if inner[0] == ALL:
 				return ANY, inner[1], core_mod((NOT, inner[2]))
 		return NOT, core_mod(inner)
 	if expr[0] == OR:
 		assert len(expr) == 3
 		return NOT, (AND, core_mod((NOT, expr[1])), core_mod((NOT, expr[2])))
+		# return expr[0], core_mod(expr[1]), core_mod(expr[2])
 	if expr[0] == AND:
 		assert len(expr) == 3
 		return expr[0], core_mod(expr[1]), core_mod(expr[2])
@@ -107,6 +106,7 @@ class ModifiedReasonerHead(nn.Module):
 		self.top_concept = nn.Parameter(T.zeros((1, emb_size)))
 		self.not_nn = nn.Linear(emb_size, emb_size, bias=False)
 		self.and_nn = nn.Linear(2*emb_size + emb_size**2, emb_size)
+		# self.or_nn = nn.Linear(2*emb_size+emb_size**2,emb_size)
 
 		sub_nn = [nn.Linear(2*emb_size + emb_size**2, hidden_size)]
 		for _ in range(hidden_count - 1):
@@ -144,6 +144,10 @@ class ModifiedReasonerHead(nn.Module):
 				c = rec(expr[1])
 				d = rec(expr[2])
 				return self.sub_nn(im_mod(c, d))
+			# elif expr[0] == OR:
+			# 	c = rec(expr[1])
+			# 	d = rec(expr[2])
+			# 	return self.or_nn(im_mod(c, d))
 			else:
 				assert False, f'Unsupported expression {expr}. Did you convert it to core form?'
 		return rec(axiom)
@@ -189,13 +193,13 @@ class ModifiedReasonerHead(nn.Module):
 		loss += F.mse_loss(bot[0], and_nn(im_mod(not_nn(input3),input3)))
 
 		# A = A ⊓ T
-		loss += F.mse_loss(input1, and_nn(im_mod(input1, top[0])))*2
-		loss += F.mse_loss(input1, and_nn(im_mod(input2, top[0])))*2
-		loss += F.mse_loss(input3, and_nn(im_mod(input3, top[0])))*2
+		loss += F.mse_loss(input1, and_nn(im_mod(input1, top[0])))
+		loss += F.mse_loss(input1, and_nn(im_mod(input2, top[0])))
+		loss += F.mse_loss(input3, and_nn(im_mod(input3, top[0])))
 
-		loss += F.mse_loss(input2, and_nn(im_mod(top[0], input1)))*2
-		loss += F.mse_loss(input2, and_nn(im_mod(top[0], input2)))*2
-		loss += F.mse_loss(input2, and_nn(im_mod(top[0], input3)))*2
+		loss += F.mse_loss(input2, and_nn(im_mod(top[0], input1)))
+		loss += F.mse_loss(input2, and_nn(im_mod(top[0], input2)))
+		loss += F.mse_loss(input2, and_nn(im_mod(top[0], input3)))
 
 		# ⊥ = A ⊓ ⊥
 		loss += F.mse_loss(bot[0], and_nn(im_mod(input1, bot[0])))
@@ -237,7 +241,7 @@ class ModifiedReasonerHead(nn.Module):
 		loss += F.mse_loss(input2, not_nn(not_nn(input2)))
 		loss += F.mse_loss(input3, not_nn(not_nn(input3)))
 		if not frozen:
-			loss += F.l1_loss(T.matmul(not_nn.weight, not_nn.weight), T.eye(not_nn.weight.shape[1])) * 13
+			loss += F.l1_loss(T.matmul(not_nn.weight, not_nn.weight), T.eye(not_nn.weight.shape[1])) * 12
 		
 		#  ⊥ ⊑ ⊥ -> True
 		if not frozen:
