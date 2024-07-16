@@ -27,7 +27,7 @@ def core_mod(expr):
 	if expr[0] == OR:
 		assert len(expr) == 3
 		return NOT, (AND, core_mod((NOT, expr[1])), core_mod((NOT, expr[2])))
-		# return expr[0], core_mod(expr[1]), core_mod(expr[2])
+		#return expr[0], core_mod(expr[1]), core_mod(expr[2])
 	if expr[0] == AND:
 		assert len(expr) == 3
 		return expr[0], core_mod(expr[1]), core_mod(expr[2])
@@ -166,7 +166,7 @@ class ModifiedReasonerHead(nn.Module):
 		input3 = encoder.concepts[int(np.round(random() * encoder.n_concepts, 0) - 1)]
 		
 		loss = 0
-		if one_onto:
+		if one_onto is False:
 			# A ⊓ A = A
 			loss += F.mse_loss(input1, and_nn(im_mod(input1, input1)))
 			loss += F.mse_loss(input2, and_nn(im_mod(input2, input2)))
@@ -189,25 +189,25 @@ class ModifiedReasonerHead(nn.Module):
 
 			loss += F.mse_loss(bot[0], and_nn(im_mod(not_nn(input1), input1)))
 			loss += F.mse_loss(bot[0], and_nn(im_mod(not_nn(input2), input2)))
-			loss += F.mse_loss(bot[0], and_nn(im_mod(not_nn(input3),input3)))
+			loss += F.mse_loss(bot[0], and_nn(im_mod(not_nn(input3), input3)))
 
 			# A = A ⊓ T
-			loss += F.mse_loss(input1, and_nn(im_mod(input1, top[0])))
-			loss += F.mse_loss(input1, and_nn(im_mod(input2, top[0])))
-			loss += F.mse_loss(input3, and_nn(im_mod(input3, top[0])))
+			loss += F.mse_loss(input1, and_nn(im_mod(input1, top[0])))*2
+			loss += F.mse_loss(input1, and_nn(im_mod(input2, top[0])))*2
+			loss += F.mse_loss(input3, and_nn(im_mod(input3, top[0])))*2
 
-			loss += F.mse_loss(input2, and_nn(im_mod(top[0], input1)))
-			loss += F.mse_loss(input2, and_nn(im_mod(top[0], input2)))
-			loss += F.mse_loss(input2, and_nn(im_mod(top[0], input3)))
+			loss += F.mse_loss(input2, and_nn(im_mod(top[0], input1)))*2
+			loss += F.mse_loss(input2, and_nn(im_mod(top[0], input2)))*2
+			loss += F.mse_loss(input2, and_nn(im_mod(top[0], input3)))*2
 
 			# ⊥ = A ⊓ ⊥
-			loss += F.mse_loss(bot[0], and_nn(im_mod(input1, bot[0])))
-			loss += F.mse_loss(bot[0], and_nn(im_mod(input2, bot[0])))
-			loss += F.mse_loss(bot[0], and_nn(im_mod(input3, bot[0])))
+			loss += F.mse_loss(bot[0], and_nn(im_mod(input1, bot[0])))*2
+			loss += F.mse_loss(bot[0], and_nn(im_mod(input2, bot[0])))*2
+			loss += F.mse_loss(bot[0], and_nn(im_mod(input3, bot[0])))*2
 
-			loss += F.mse_loss(bot[0], and_nn(im_mod(bot[0], input1)))
-			loss += F.mse_loss(bot[0], and_nn(im_mod(bot[0], input2)))
-			loss += F.mse_loss(bot[0], and_nn(im_mod(bot[0], input3)))
+			loss += F.mse_loss(bot[0], and_nn(im_mod(bot[0], input1)))*2
+			loss += F.mse_loss(bot[0], and_nn(im_mod(bot[0], input2)))*2
+			loss += F.mse_loss(bot[0], and_nn(im_mod(bot[0], input3)))*2
 
 			if not frozen:
 				loss += F.mse_loss(bot[0], and_nn(im_mod(top[0], bot[0])))
@@ -229,133 +229,31 @@ class ModifiedReasonerHead(nn.Module):
 		loss += (1 - T.sigmoid(sub_nn(im_mod(input2, input2)))).sum()
 		loss += (1 - T.sigmoid(sub_nn(im_mod(input3, input3)))).sum()
 
+		#  A ⊑ ¬A -> False
+		loss+= T.sigmoid(sub_nn(im_mod(input3, not_nn(input3)))).sum()
+		loss+= T.sigmoid(sub_nn(im_mod(input2, not_nn(input2)))).sum()
+		loss+= T.sigmoid(sub_nn(im_mod(input1, not_nn(input1)))).sum()
+
 		#  ⊥ = ¬T  
 		if not frozen:
-			loss += F.l1_loss(bot[0], not_nn(top[0]))*2
+			loss += F.l1_loss(bot[0], not_nn(top[0]))
 		#  T = ¬⊥
-			loss += F.l1_loss(top[0], not_nn(bot[0]))*2
+			loss += F.l1_loss(top[0], not_nn(bot[0]))
 
 		#  A = ¬(¬(A))
 		loss += F.mse_loss(input1, not_nn(not_nn(input1)))
 		loss += F.mse_loss(input2, not_nn(not_nn(input2)))
 		loss += F.mse_loss(input3, not_nn(not_nn(input3)))
+
 		if not frozen:
-			loss += F.l1_loss(T.matmul(not_nn.weight, not_nn.weight), T.eye(not_nn.weight.shape[1])) * 12
+			loss += F.l1_loss(T.matmul(not_nn.weight, not_nn.weight), T.eye(not_nn.weight.shape[1])) * 40
 		
 		#  ⊥ ⊑ ⊥ -> True
 		if not frozen:
 			loss += (1 - T.sigmoid(sub_nn(im_mod(bot[0], bot[0])))).sum()
 
-				# Prawo wyłączonego środka: A ⊔ ¬A = T
-# 		loss += F.mse_loss(top[0], or_nn(im_mod(input1, not_nn(input1))))
-# 		loss += F.mse_loss(top[0], or_nn(im_mod(input2, not_nn(input2))))
-# 		loss += F.mse_loss(top[0], or_nn(im_mod(input3, not_nn(input3))))
-
-# 		# Prawa de Morgana: ¬(A ⊔ B) = ¬A ⊓ ¬B
-# 		loss += F.mse_loss(not_nn(or_nn(im_mod(input1, input2))), 
-# 						and_nn(im_mod(not_nn(input1), not_nn(input2))))
-# 		# Przykład 2
-# 		loss += F.mse_loss(not_nn(or_nn(im_mod(input2, input3))), 
-# 						and_nn(im_mod(not_nn(input2), not_nn(input3))))
-# 		# Przykład 3
-# 		loss += F.mse_loss(not_nn(or_nn(im_mod(input1, input3))), 
-# 						and_nn(im_mod(not_nn(input1), not_nn(input3))))
-
-# 		# Obustronnie zanegowana opcja: ¬(A ⊔ B) = ¬A ⊓ ¬B
-# 		# Przykład 1
-# 		loss += F.mse_loss(or_nn(im_mod(input1, input2)), 
-# 						not_nn(and_nn(im_mod(not_nn(input1), not_nn(input2)))))
-# 		# Przykład 2
-# 		loss += F.mse_loss(or_nn(im_mod(input2, input3)), 
-# 						not_nn(and_nn(im_mod(not_nn(input2), not_nn(input3)))))
-# 		# Przykład 3
-# 		loss += F.mse_loss(or_nn(im_mod(input1, input3)), 
-# 						not_nn(and_nn(im_mod(not_nn(input1), not_nn(input3)))))
-
-# 		# Prawa de Morgana: ¬(A ⊓ B) = ¬A ⊔ ¬B
-# 		# Przykład 1
-# 		loss += F.mse_loss(not_nn(and_nn(im_mod(input1, input2))), 
-# 						or_nn(im_mod(not_nn(input1), not_nn(input2))))
-# 		# Przykład 2
-# 		loss += F.mse_loss(not_nn(and_nn(im_mod(input2, input3))), 
-# 						or_nn(im_mod(not_nn(input2), not_nn(input3))))
-# 		# Przykład 3
-# 		loss += F.mse_loss(not_nn(and_nn(im_mod(input1, input3))), 
-# 						or_nn(im_mod(not_nn(input1), not_nn(input3))))
-
-# 		# Obustronnie zanegowana opcja: ¬(A ⊓ B) = ¬A ⊔ ¬B
-# 		# Przykład 1
-# 		loss += F.mse_loss(and_nn(im_mod(input1, input2)), 
-# 						not_nn(or_nn(im_mod(not_nn(input1), not_nn(input2)))))
-# 		# Przykład 2
-# 		loss += F.mse_loss(and_nn(im_mod(input2, input3)), 
-# 						not_nn(or_nn(im_mod(not_nn(input2), not_nn(input3)))))
-# 		# Przykład 3
-# 		loss += F.mse_loss(and_nn(im_mod(input1, input3)), 
-# 						not_nn(or_nn(im_mod(not_nn(input1), not_nn(input3)))))
-
-# 		# Prawa absorpcji: A ⊔ (A ⊓ B) = A
-# 		loss += F.mse_loss(input1, or_nn(im_mod(input1, and_nn(im_mod(input1, input2)))))
-# 		loss += F.mse_loss(input1, or_nn(im_mod(input1, and_nn(im_mod(input2, input1)))))
-# 		loss += F.mse_loss(input1, or_nn(im_mod(and_nn(im_mod(input1, input2)), input1)))
-# 		loss += F.mse_loss(input1, or_nn(im_mod(and_nn(im_mod(input2, input1)), input2)))
-
-# 		loss += F.mse_loss(input1, or_nn(im_mod(input1, and_nn(im_mod(input1, input3)))))
-# 		loss += F.mse_loss(input1, or_nn(im_mod(input1, and_nn(im_mod(input3, input1)))))
-# 		loss += F.mse_loss(input1, or_nn(im_mod(and_nn(im_mod(input1, input3)), input1)))
-# 		loss += F.mse_loss(input1, or_nn(im_mod(and_nn(im_mod(input3, input1)), input3)))
-
-# # Dla input2
-# 		loss += F.mse_loss(input2, or_nn(im_mod(input2, and_nn(im_mod(input2, input1)))))
-# 		loss += F.mse_loss(input2, or_nn(im_mod(input2, and_nn(im_mod(input1, input2)))))
-# 		loss += F.mse_loss(input2, or_nn(im_mod(and_nn(im_mod(input2, input1)), input2)))
-# 		loss += F.mse_loss(input2, or_nn(im_mod(and_nn(im_mod(input1, input2)), input1)))
-# 		loss += F.mse_loss(input2, or_nn(im_mod(input2, and_nn(im_mod(input2, input3)))))
-# 		loss += F.mse_loss(input2, or_nn(im_mod(input2, and_nn(im_mod(input3, input2)))))
-# 		loss += F.mse_loss(input2, or_nn(im_mod(and_nn(im_mod(input2, input3)), input2)))
-# 		loss += F.mse_loss(input2, or_nn(im_mod(and_nn(im_mod(input3, input2)), input3)))
-
-# 		# Dla input3
-# 		loss += F.mse_loss(input3, or_nn(im_mod(input3, and_nn(im_mod(input3, input1)))))
-# 		loss += F.mse_loss(input3, or_nn(im_mod(input3, and_nn(im_mod(input1, input3)))))
-# 		loss += F.mse_loss(input3, or_nn(im_mod(and_nn(im_mod(input3, input1)), input3)))
-# 		loss += F.mse_loss(input3, or_nn(im_mod(and_nn(im_mod(input1, input3)), input1)))
-# 		loss += F.mse_loss(input3, or_nn(im_mod(input3, and_nn(im_mod(input3, input2)))))
-# 		loss += F.mse_loss(input3, or_nn(im_mod(input3, and_nn(im_mod(input2, input3)))))
-# 		loss += F.mse_loss(input3, or_nn(im_mod(and_nn(im_mod(input3, input2)), input3)))
-# 		loss += F.mse_loss(input3, or_nn(im_mod(and_nn(im_mod(input2, input3)), input2)))
-
-# 		# Prawa dystrybucji: A ⊔ (B ⊓ C) = (A ⊔ B) ⊓ (A ⊔ C)
-# 		loss += F.mse_loss(or_nn(im_mod(input1, and_nn(im_mod(input2, input3)))),
-# 						and_nn(im_mod(or_nn(im_mod(input1, input2)), or_nn(im_mod(input1, input3)))))
-
-# 		# Właściwości zbioru pustego i pełnego z OR
-# 		loss += F.mse_loss(input1, or_nn(im_mod(input1, bot[0])))
-# 		loss += F.mse_loss(input2, or_nn(im_mod(input2, bot[0])))
-# 		loss += F.mse_loss(input3, or_nn(im_mod(input3, bot[0])))
-# 		# Input po prawej stronie im_mod
-# 		loss += F.mse_loss(input1, or_nn(im_mod(bot[0], input1)))
-# 		loss += F.mse_loss(input2, or_nn(im_mod(bot[0], input2)))
-# 		loss += F.mse_loss(input3, or_nn(im_mod(bot[0], input3)))
-
-# 		# Input po lewej stronie im_mod
-# 		loss += F.mse_loss(top[0], or_nn(im_mod(input1, top[0])))
-# 		loss += F.mse_loss(top[0], or_nn(im_mod(input2, top[0])))
-# 		loss += F.mse_loss(top[0], or_nn(im_mod(input3, top[0])))
-# 		# Input po prawej stronie im_mod
-# 		loss += F.mse_loss(top[0], or_nn(im_mod(top[0], input1)))
-# 		loss += F.mse_loss(top[0], or_nn(im_mod(top[0], input2)))
-# 		loss += F.mse_loss(top[0], or_nn(im_mod(top[0], input3)))
-
-
-# 		# Właściwości kommutatywności i łączności dla OR
-# 		loss += F.mse_loss(or_nn(im_mod(input1, input2)), or_nn(im_mod(input2, input1)))  # A ⊔ B = B ⊔ A
-# 		loss += F.mse_loss(or_nn(im_mod(input1, or_nn(im_mod(input2, input3)))),
-# 						or_nn(im_mod(or_nn(im_mod(input1, input2)), input3)))  # A ⊔ (B ⊔ C) = (A ⊔ B) ⊔ C
-
-
 		return loss
-
+	
 	def classify_batch(self, axioms, embeddings):
 		return T.vstack([self.encode(axiom, emb) for axiom, emb in zip(axioms, embeddings)])
 	
@@ -434,10 +332,10 @@ def train_mod(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_siz
 			logger.step(loss)
 
 		# Validation
-		if validate:
-			with T.no_grad():
-				val_loss, yb, Yb = eval_batch_mod(reasoner, encoders, X_vl, y_vl, idx_vl)
-				logger.step_validate(val_loss, yb, Yb, idx_vl)
+		# if validate:
+		with T.no_grad():
+			val_loss, yb, Yb = eval_batch_mod(reasoner, encoders, X_vl, y_vl, idx_vl)
+			logger.step_validate(val_loss, yb, Yb, idx_vl)
 
 		identities_weight*=identitity_weight_decay
 		logger.end_epoch()
@@ -445,4 +343,5 @@ def train_mod(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_siz
 	if freeze_reasoner:
 		unfreeze(reasoner)
 
-	return logger
+	return yb, Yb
+	# return logger
