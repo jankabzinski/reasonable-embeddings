@@ -265,17 +265,17 @@ def count_elements(lista):
                 licznik += 1
     return licznik
 
-def prepare_data(data_tr, data_vl, data_te, seed):
+def prepare_data(data_tr, data_vl, data_te, seed, split):
 	filtered_data_tr = []
 	filtered_data_vl = []
 	for onto, X, y in zip(data_tr[0], data_tr[1], data_tr[2]):
-		if count_elements(X) <= 4:
+		if count_elements(X) <= split:
 			filtered_data_tr.append([onto, X, y])
 		else:
 			filtered_data_vl.append([onto, X, y])
 
 	for onto, X, y in zip(data_vl[0], data_vl[1], data_vl[2]):
-		if count_elements(X) <= 4:
+		if count_elements(X) <= split:
 			filtered_data_tr.append([onto, X, y])
 		else:
 			filtered_data_vl.append([onto, X, y])
@@ -299,7 +299,7 @@ def prepare_data(data_tr, data_vl, data_te, seed):
 	filtered_data_te_tr = []
 
 	for onto, X, y in zip(data_te[0], data_te[1], data_te[2]):
-		if count_elements(X) <= 4:
+		if count_elements(X) <= split:
 			filtered_data_te_tr.append([onto, X, y])
 		else:
 			filtered_data_te_te.append([onto, X, y])

@@ -20,9 +20,9 @@ def core_mod(expr):
 		# 	return BOT
 		# if inner == BOT:
 		# 	return TOP
-		if isinstance(inner, tuple):
-			if inner[0] == ALL:
-				return ANY, inner[1], core_mod((NOT, inner[2]))
+		# if isinstance(inner, tuple):
+		# 	if inner[0] == ALL:
+		# 		return ANY, inner[1], core_mod((NOT, inner[2]))
 		return NOT, core_mod(inner)
 	if expr[0] == OR:
 		assert len(expr) == 3
@@ -164,7 +164,7 @@ class ModifiedReasonerHead(nn.Module):
 		input1 = encoder.concepts[int(np.round(random() * encoder.n_concepts, 0) - 1)]
 		input2 = encoder.concepts[int(np.round(random() * encoder.n_concepts, 0) - 1)]
 		input3 = encoder.concepts[int(np.round(random() * encoder.n_concepts, 0) - 1)]
-		
+
 		loss = 0
 		if one_onto is False:
 			# A ⊓ A = A
@@ -224,16 +224,6 @@ class ModifiedReasonerHead(nn.Module):
 		loss += (1 - T.sigmoid(sub_nn(im_mod(bot[0], input2)))).sum()
 		loss += (1 - T.sigmoid(sub_nn(im_mod(bot[0], input3)))).sum()
 
-		#  A ⊑ A -> True
-		loss += (1 - T.sigmoid(sub_nn(im_mod(input1, input1)))).sum()
-		loss += (1 - T.sigmoid(sub_nn(im_mod(input2, input2)))).sum()
-		loss += (1 - T.sigmoid(sub_nn(im_mod(input3, input3)))).sum()
-
-		#  A ⊑ ¬A -> False
-		loss+= T.sigmoid(sub_nn(im_mod(input3, not_nn(input3)))).sum()
-		loss+= T.sigmoid(sub_nn(im_mod(input2, not_nn(input2)))).sum()
-		loss+= T.sigmoid(sub_nn(im_mod(input1, not_nn(input1)))).sum()
-
 		#  ⊥ = ¬T  
 		if not frozen:
 			loss += F.l1_loss(bot[0], not_nn(top[0]))
@@ -284,7 +274,6 @@ def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward
 		identity_loss = reasoner.all_identities(encoders, frozen, one_onto) * identities_weight
 	else:
 		identity_loss = T.tensor(0.0, device=Y_.device, requires_grad=False)
-
 
 	loss = main_loss + identity_loss
 
@@ -343,5 +332,5 @@ def train_mod(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_siz
 	if freeze_reasoner:
 		unfreeze(reasoner)
 
-	return yb, Yb
-	# return logger
+	# return yb, Yb
+	return logger
