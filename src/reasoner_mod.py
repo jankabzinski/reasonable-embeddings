@@ -9,7 +9,7 @@ from src.simplefact import *
 from src.simplefact.syntax import *
 from src.utils import *
 from src.vis import *
-from random import random
+import random
 
 def core_mod(expr):
 	if isinstance(expr, int) or expr == TOP or expr == BOT:
@@ -160,10 +160,10 @@ class ModifiedReasonerHead(nn.Module):
 		not_nn = self.not_nn
 		# or_nn = self.or_nn 
 
-		encoder = encoders[int(np.round(random() * (len(encoders) - 1), 0))]
-		input1 = encoder.concepts[int(np.round(random() * encoder.n_concepts, 0) - 1)]
-		input2 = encoder.concepts[int(np.round(random() * encoder.n_concepts, 0) - 1)]
-		input3 = encoder.concepts[int(np.round(random() * encoder.n_concepts, 0) - 1)]
+		encoder = encoders[int(np.round(random.random() * (len(encoders) - 1), 0))]
+		input1 = encoder.concepts[int(np.round(random.random() * encoder.n_concepts, 0) - 1)]
+		input2 = encoder.concepts[int(np.round(random.random() * encoder.n_concepts, 0) - 1)]
+		input3 = encoder.concepts[int(np.round(random.random() * encoder.n_concepts, 0) - 1)]
 
 		loss = 0
 		if one_onto is False:

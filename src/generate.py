@@ -7,6 +7,7 @@ import pandas as pd
 from sys import stderr
 from time import time
 
+from src.reasoner import core
 from src.simplefact import *
 from src.simplefact.syntax import *
 from src.utils import *
@@ -20,6 +21,10 @@ REASONER_TIMEOUT = 10_000 # ms
 DEFAULT_MIN_SPEED = 20 # queries per second
 
 def AxiomGenerator(*, n_concepts, n_roles, rng, max_depth, p_atomic):
+	if max_depth < 3:
+		print('Too shallow max depth')
+		return None
+
 	p_top_bot = 1 - p_atomic
 	def random_expr(*, max_depth):
 		def gen(d):
@@ -38,9 +43,9 @@ def AxiomGenerator(*, n_concepts, n_roles, rng, max_depth, p_atomic):
 	def random_axiom(*, max_depth=max_depth):
 		# max_depth = int(rng.integers(1, max_depth+1))
 		op = rng.choice([SUB, DIS])
-		# ld = rng.integers(1, max_depth+1)
-		# rd = rng.integers(1, max(1, max_depth - ld)+1)
-		return op, random_expr(max_depth=max_depth), random_expr(max_depth=max_depth)
+		ld = rng.integers(1, max_depth-2)
+		rd = max_depth - ld - 1
+		return op, random_expr(max_depth=ld), random_expr(max_depth=rd)
 		
 	return random_axiom
 
@@ -347,6 +352,98 @@ def prepare_data(data_tr, data_vl, data_te, seed, split):
 	data_te_vl = [idx_te_val, X_te_val, y_te_val] 
 
 	return data_tr, data_vl, data_te_tr, data_te_vl, data_te_te['ontology_id'].tolist(), data_te_te['X'].tolist(), data_te_te['y'].tolist()
+
+def reach_given_mean(data, oczekiwana_srednia, tolerancja=0.0005):
+
+	df = pd.DataFrame({'x':data[1], 'y':data[2], 'idx':data[0]})
+	df['num_el'] = count_elements(df['x'])
+	df= df.sort_values(by='num_el')
+	df = df.drop(columns=['num_el'])    
+
+	while True:
+		# Oblicz aktualną średnią dla x
+		aktualna_srednia = df['y'].mean()
+
+		# Sprawdź, czy osiągnęliśmy oczekiwaną średnią z tolerancją
+		if abs(aktualna_srednia - oczekiwana_srednia) <= tolerancja:
+			break
+		
+		# Jeśli nie, usuń jeden element z etykietą 1
+		indeks_do_usuniecia = df[(df['y'] == 1)].index
+		
+		if len(indeks_do_usuniecia) > 0:
+			df = df.drop(indeks_do_usuniecia[0])
+		else:
+			# Jeśli nie ma już elementów do usunięcia, przerwij pętlę
+			print("Nie można osiągnąć oczekiwanej średniej")
+			break
+
+	return [df['idx'].tolist(), df['x'].tolist(), df['y'].tolist()]
+
+def max_element_difference(tensor1, tensor2):
+    if tensor1.shape != tensor2.shape:
+        raise ValueError("Tensory muszą mieć ten sam kształt")
+    diff = torch.abs(tensor1 - tensor2)
+    max_diff = torch.max(diff).item()
+    
+    return max_diff
+
+def make_dataset(onto, fact, rng, n_queries, min_query_size, max_query_size):
+    Nc, Nr = onto.n_concepts, onto.n_roles
+    gen = AxiomGenerator(rng=rng, n_concepts=Nc, n_roles=Nr ,max_depth=max_query_size, p_atomic=0.95)
+
+    queries, answers, qset = [], [], set()
+    while len(queries) < n_queries:
+        axiom = gen()
+        axiom_core = core(axiom)
+        num =  count_elements(axiom_core)
+        if num > max_query_size or num < min_query_size or axiom_core in qset: 
+            continue
+        answer = fact.check_axiom(axiom)
+        queries.append(axiom_core); answers.append(int(answer)); qset.add(axiom_core)
+
+    return queries, answers
+
+def reduce_dataset(data, onto_number ,target_size, pattern_data, tolerance=0.00001):
+    pdf = pd.DataFrame({'x': pattern_data[1], 'y': pattern_data[2], 'idx': pattern_data[0]})
+    df = pd.DataFrame({'x': data[1], 'y': data[2], 'idx': data[0]})
+    
+    result_idx, result_x, result_y = [], [], []
+    
+    for idx in range(onto_number):  
+        df_idx = df[df['idx'] == idx]
+        pdf_idx = pdf[pdf['idx'] == idx]
+        
+        target_mean = pdf_idx['y'].mean()
+        
+        df_idx = df_idx.sort_values(by='y', ascending=False)
+        
+        while len(df_idx) > target_size: 
+            current_mean = df_idx['y'].mean()
+            current_size = len(df_idx)
+            
+            if current_size <= target_size and abs(current_mean - target_mean) <= tolerance:
+                break
+            
+            if current_size > target_size:
+                if current_mean > target_mean:
+                    df_idx = df_idx.iloc[1:]
+                else:
+                    df_idx = df_idx.iloc[:-1]
+            else:
+                if current_mean > target_mean:
+                    max_label_index = df_idx['y'].idxmax()
+                    df_idx = df_idx.drop(max_label_index)
+                else:
+                    min_label_index = df_idx['y'].idxmin()
+                    df_idx = df_idx.drop(min_label_index)
+
+        result_idx.extend(df_idx['idx'].tolist())
+        result_x.extend(df_idx['x'].tolist())
+        result_y.extend(df_idx['y'].tolist()) 
+
+    return [result_idx, result_x, result_y]
+
 
 if __name__ == '__main__':
 	seed = 42
