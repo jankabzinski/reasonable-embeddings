@@ -353,33 +353,6 @@ def prepare_data(data_tr, data_vl, data_te, seed, split):
 
 	return data_tr, data_vl, data_te_tr, data_te_vl, data_te_te['ontology_id'].tolist(), data_te_te['X'].tolist(), data_te_te['y'].tolist()
 
-def reach_given_mean(data, oczekiwana_srednia, tolerancja=0.0005):
-
-	df = pd.DataFrame({'x':data[1], 'y':data[2], 'idx':data[0]})
-	df['num_el'] = count_elements(df['x'])
-	df= df.sort_values(by='num_el')
-	df = df.drop(columns=['num_el'])    
-
-	while True:
-		# Oblicz aktualną średnią dla x
-		aktualna_srednia = df['y'].mean()
-
-		# Sprawdź, czy osiągnęliśmy oczekiwaną średnią z tolerancją
-		if abs(aktualna_srednia - oczekiwana_srednia) <= tolerancja:
-			break
-		
-		# Jeśli nie, usuń jeden element z etykietą 1
-		indeks_do_usuniecia = df[(df['y'] == 1)].index
-		
-		if len(indeks_do_usuniecia) > 0:
-			df = df.drop(indeks_do_usuniecia[0])
-		else:
-			# Jeśli nie ma już elementów do usunięcia, przerwij pętlę
-			print("Nie można osiągnąć oczekiwanej średniej")
-			break
-
-	return [df['idx'].tolist(), df['x'].tolist(), df['y'].tolist()]
-
 def max_element_difference(tensor1, tensor2):
     if tensor1.shape != tensor2.shape:
         raise ValueError("Tensory muszą mieć ten sam kształt")
