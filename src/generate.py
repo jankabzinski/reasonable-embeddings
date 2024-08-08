@@ -258,6 +258,21 @@ def load_dataset(path):
 			return deserialize_dataset(json.load(f))
 	assert False, 'Bad extension'
 
+def split_dataset(data, group_col, stratify_col, seed, test_size=0.15, val_size=0.15):
+    groups = data[group_col].unique()
+    train_idx, val_idx, test_idx = [], [], []
+
+    for group in groups:
+        group_data = data[data[group_col] == group]
+        train_data, temp_data = train_test_split(group_data, test_size=(test_size + val_size), stratify=group_data[stratify_col], random_state=seed)
+        val_data, test_data = train_test_split(temp_data, test_size=test_size/(test_size + val_size), stratify=temp_data[stratify_col], random_state=seed)
+
+        train_idx.extend(train_data.index)
+        val_idx.extend(val_data.index)
+        test_idx.extend(test_data.index)
+
+    return data.loc[train_idx], data.loc[val_idx], data.loc[test_idx]
+
 def count_elements(lista):
     stos = [lista]
     licznik = 0
