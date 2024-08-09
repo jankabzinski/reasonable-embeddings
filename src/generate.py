@@ -7,6 +7,7 @@ import pandas as pd
 from sys import stderr
 from time import time
 
+from src.reasoner import core
 from src.simplefact import *
 from src.simplefact.syntax import *
 from src.utils import *
@@ -20,6 +21,10 @@ REASONER_TIMEOUT = 10_000 # ms
 DEFAULT_MIN_SPEED = 20 # queries per second
 
 def AxiomGenerator(*, n_concepts, n_roles, rng, max_depth, p_atomic):
+	if max_depth < 3:
+		print('Too shallow max depth')
+		return None
+
 	p_top_bot = 1 - p_atomic
 	def random_expr(*, max_depth):
 		def gen(d):
@@ -38,9 +43,9 @@ def AxiomGenerator(*, n_concepts, n_roles, rng, max_depth, p_atomic):
 	def random_axiom(*, max_depth=max_depth):
 		# max_depth = int(rng.integers(1, max_depth+1))
 		op = rng.choice([SUB, DIS])
-		# ld = rng.integers(1, max_depth+1)
-		# rd = rng.integers(1, max(1, max_depth - ld)+1)
-		return op, random_expr(max_depth=max_depth), random_expr(max_depth=max_depth)
+		ld = rng.integers(1, max_depth-2)
+		rd = max_depth - ld - 1
+		return op, random_expr(max_depth=ld), random_expr(max_depth=rd)
 		
 	return random_axiom
 
@@ -253,6 +258,21 @@ def load_dataset(path):
 			return deserialize_dataset(json.load(f))
 	assert False, 'Bad extension'
 
+def split_dataset(data, group_col, stratify_col, seed, test_size=0.15, val_size=0.15):
+    groups = data[group_col].unique()
+    train_idx, val_idx, test_idx = [], [], []
+
+    for group in groups:
+        group_data = data[data[group_col] == group]
+        train_data, temp_data = train_test_split(group_data, test_size=(test_size + val_size), stratify=group_data[stratify_col], random_state=seed)
+        val_data, test_data = train_test_split(temp_data, test_size=test_size/(test_size + val_size), stratify=temp_data[stratify_col], random_state=seed)
+
+        train_idx.extend(train_data.index)
+        val_idx.extend(val_data.index)
+        test_idx.extend(test_data.index)
+
+    return data.loc[train_idx], data.loc[val_idx], data.loc[test_idx]
+
 def count_elements(lista):
     stos = [lista]
     licznik = 0
@@ -265,17 +285,17 @@ def count_elements(lista):
                 licznik += 1
     return licznik
 
-def prepare_data(data_tr, data_vl, data_te, seed):
+def prepare_data(data_tr, data_vl, data_te, seed, split):
 	filtered_data_tr = []
 	filtered_data_vl = []
 	for onto, X, y in zip(data_tr[0], data_tr[1], data_tr[2]):
-		if count_elements(X) <= 4:
+		if count_elements(X) <= split:
 			filtered_data_tr.append([onto, X, y])
 		else:
 			filtered_data_vl.append([onto, X, y])
 
 	for onto, X, y in zip(data_vl[0], data_vl[1], data_vl[2]):
-		if count_elements(X) <= 4:
+		if count_elements(X) <= split:
 			filtered_data_tr.append([onto, X, y])
 		else:
 			filtered_data_vl.append([onto, X, y])
@@ -299,7 +319,7 @@ def prepare_data(data_tr, data_vl, data_te, seed):
 	filtered_data_te_tr = []
 
 	for onto, X, y in zip(data_te[0], data_te[1], data_te[2]):
-		if count_elements(X) <= 4:
+		if count_elements(X) <= split:
 			filtered_data_te_tr.append([onto, X, y])
 		else:
 			filtered_data_te_te.append([onto, X, y])
@@ -347,6 +367,71 @@ def prepare_data(data_tr, data_vl, data_te, seed):
 	data_te_vl = [idx_te_val, X_te_val, y_te_val] 
 
 	return data_tr, data_vl, data_te_tr, data_te_vl, data_te_te['ontology_id'].tolist(), data_te_te['X'].tolist(), data_te_te['y'].tolist()
+
+def max_element_difference(tensor1, tensor2):
+    if tensor1.shape != tensor2.shape:
+        raise ValueError("Tensory muszą mieć ten sam kształt")
+    diff = torch.abs(tensor1 - tensor2)
+    max_diff = torch.max(diff).item()
+    
+    return max_diff
+
+def make_dataset(onto, fact, rng, n_queries, min_query_size, max_query_size):
+    Nc, Nr = onto.n_concepts, onto.n_roles
+    gen = AxiomGenerator(rng=rng, n_concepts=Nc, n_roles=Nr ,max_depth=max_query_size, p_atomic=0.95)
+
+    queries, answers, qset = [], [], set()
+    while len(queries) < n_queries:
+        axiom = gen()
+        axiom_core = core(axiom)
+        num =  count_elements(axiom_core)
+        if num > max_query_size or num < min_query_size or axiom_core in qset: 
+            continue
+        answer = fact.check_axiom(axiom)
+        queries.append(axiom_core); answers.append(int(answer)); qset.add(axiom_core)
+
+    return queries, answers
+
+def reduce_dataset(data, onto_number ,target_size, pattern_data, tolerance=0.00001):
+    pdf = pd.DataFrame({'x': pattern_data[1], 'y': pattern_data[2], 'idx': pattern_data[0]})
+    df = pd.DataFrame({'x': data[1], 'y': data[2], 'idx': data[0]})
+    
+    result_idx, result_x, result_y = [], [], []
+    
+    for idx in range(onto_number):  
+        df_idx = df[df['idx'] == idx]
+        pdf_idx = pdf[pdf['idx'] == idx]
+        
+        target_mean = pdf_idx['y'].mean()
+        
+        df_idx = df_idx.sort_values(by='y', ascending=False)
+        
+        while len(df_idx) > target_size: 
+            current_mean = df_idx['y'].mean()
+            current_size = len(df_idx)
+            
+            if current_size <= target_size and abs(current_mean - target_mean) <= tolerance:
+                break
+            
+            if current_size > target_size:
+                if current_mean > target_mean:
+                    df_idx = df_idx.iloc[1:]
+                else:
+                    df_idx = df_idx.iloc[:-1]
+            else:
+                if current_mean > target_mean:
+                    max_label_index = df_idx['y'].idxmax()
+                    df_idx = df_idx.drop(max_label_index)
+                else:
+                    min_label_index = df_idx['y'].idxmin()
+                    df_idx = df_idx.drop(min_label_index)
+
+        result_idx.extend(df_idx['idx'].tolist())
+        result_x.extend(df_idx['x'].tolist())
+        result_y.extend(df_idx['y'].tolist()) 
+
+    return [result_idx, result_x, result_y]
+
 
 if __name__ == '__main__':
 	seed = 42

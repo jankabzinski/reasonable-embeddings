@@ -9,7 +9,7 @@ from src.simplefact import *
 from src.simplefact.syntax import *
 from src.utils import *
 from src.vis import *
-from random import random
+import random
 
 def core_mod(expr):
 	if isinstance(expr, int) or expr == TOP or expr == BOT:
@@ -20,9 +20,9 @@ def core_mod(expr):
 		# 	return BOT
 		# if inner == BOT:
 		# 	return TOP
-		if isinstance(inner, tuple):
-			if inner[0] == ALL:
-				return ANY, inner[1], core_mod((NOT, inner[2]))
+		# if isinstance(inner, tuple):
+		# 	if inner[0] == ALL:
+		# 		return ANY, inner[1], core_mod((NOT, inner[2]))
 		return NOT, core_mod(inner)
 	if expr[0] == OR:
 		assert len(expr) == 3
@@ -152,7 +152,7 @@ class ModifiedReasonerHead(nn.Module):
 				assert False, f'Unsupported expression {expr}. Did you convert it to core form?'
 		return rec(axiom)
 	
-	def all_identities(self, encoders, frozen, one_onto=False):
+	def all_identities(self, encoders):
 		and_nn = self.and_nn
 		bot = self.bot_concept
 		top = self.top_concept
@@ -160,97 +160,83 @@ class ModifiedReasonerHead(nn.Module):
 		not_nn = self.not_nn
 		# or_nn = self.or_nn 
 
-		encoder = encoders[int(np.round(random() * (len(encoders) - 1), 0))]
-		input1 = encoder.concepts[int(np.round(random() * encoder.n_concepts, 0) - 1)]
-		input2 = encoder.concepts[int(np.round(random() * encoder.n_concepts, 0) - 1)]
-		input3 = encoder.concepts[int(np.round(random() * encoder.n_concepts, 0) - 1)]
-		
 		loss = 0
-		if one_onto is False:
-			# A ⊓ A = A
-			loss += F.mse_loss(input1, and_nn(im_mod(input1, input1)))
-			loss += F.mse_loss(input2, and_nn(im_mod(input2, input2)))
-			loss += F.mse_loss(input3, and_nn(im_mod(input3, input3)))
+		encoder = encoders[int(np.round(random.random() * (len(encoders) - 1), 0))]
+		input1 = encoder.concepts[int(np.round(random.random() * encoder.n_concepts, 0) - 1)]
+		input2 = encoder.concepts[int(np.round(random.random() * encoder.n_concepts, 0) - 1)]
+		input3 = encoder.concepts[int(np.round(random.random() * encoder.n_concepts, 0) - 1)]
 
-			# A ⊓ (B ⊓ C) = (A ⊓ B) ⊓ C 
-			loss += F.mse_loss(and_nn(im_mod(input1, and_nn(im_mod(input2, input3)))), and_nn(im_mod(and_nn(im_mod(input1, input2)), input3)))
-			loss += F.mse_loss(and_nn(im_mod(input2, and_nn(im_mod(input1, input3)))), and_nn(im_mod(and_nn(im_mod(input1, input2)), input3)))
-			loss += F.mse_loss(and_nn(im_mod(input3, and_nn(im_mod(input1, input2)))), and_nn(im_mod(and_nn(im_mod(input3, input2)), input1)))
+		# A ⊓ A = A
+		loss += F.mse_loss(input1, and_nn(im_mod(input1, input1)))
+		loss += F.mse_loss(input2, and_nn(im_mod(input2, input2)))
+		loss += F.mse_loss(input3, and_nn(im_mod(input3, input3)))
 
-			# A ⊓ B = B ⊓ A
-			loss += F.mse_loss(and_nn(im_mod(input1, input3)), and_nn(im_mod(input3, input1)))
-			loss += F.mse_loss(and_nn(im_mod(input3, input2)), and_nn(im_mod(input2, input3)))
-			loss += F.mse_loss(and_nn(im_mod(input2, input1)), and_nn(im_mod(input1, input2)))
+		# A ⊓ (B ⊓ C) = (A ⊓ B) ⊓ C 
+		loss += F.mse_loss(and_nn(im_mod(input1, and_nn(im_mod(input2, input3)))), and_nn(im_mod(and_nn(im_mod(input1, input2)), input3)))
+		loss += F.mse_loss(and_nn(im_mod(input2, and_nn(im_mod(input1, input3)))), and_nn(im_mod(and_nn(im_mod(input1, input2)), input3)))
+		loss += F.mse_loss(and_nn(im_mod(input3, and_nn(im_mod(input1, input2)))), and_nn(im_mod(and_nn(im_mod(input3, input2)), input1)))
 
-			# ⊥ = A ⊓ ¬A
-			loss += F.mse_loss(bot[0], and_nn(im_mod(input1, not_nn(input1))))
-			loss += F.mse_loss(bot[0], and_nn(im_mod(input2, not_nn(input2))))
-			loss += F.mse_loss(bot[0], and_nn(im_mod(input3, not_nn(input3))))
+		# A ⊓ B = B ⊓ A
+		loss += F.mse_loss(and_nn(im_mod(input1, input3)), and_nn(im_mod(input3, input1)))
+		loss += F.mse_loss(and_nn(im_mod(input3, input2)), and_nn(im_mod(input2, input3)))
+		loss += F.mse_loss(and_nn(im_mod(input2, input1)), and_nn(im_mod(input1, input2)))
 
-			loss += F.mse_loss(bot[0], and_nn(im_mod(not_nn(input1), input1)))
-			loss += F.mse_loss(bot[0], and_nn(im_mod(not_nn(input2), input2)))
-			loss += F.mse_loss(bot[0], and_nn(im_mod(not_nn(input3), input3)))
+		# ⊥ = A ⊓ ¬A
+		loss += F.mse_loss(bot[0], and_nn(im_mod(input1, not_nn(input1))))
+		loss += F.mse_loss(bot[0], and_nn(im_mod(input2, not_nn(input2))))
+		loss += F.mse_loss(bot[0], and_nn(im_mod(input3, not_nn(input3))))
 
-			# A = A ⊓ T
-			loss += F.mse_loss(input1, and_nn(im_mod(input1, top[0])))*2
-			loss += F.mse_loss(input1, and_nn(im_mod(input2, top[0])))*2
-			loss += F.mse_loss(input3, and_nn(im_mod(input3, top[0])))*2
+		loss += F.mse_loss(bot[0], and_nn(im_mod(not_nn(input1), input1)))
+		loss += F.mse_loss(bot[0], and_nn(im_mod(not_nn(input2), input2)))
+		loss += F.mse_loss(bot[0], and_nn(im_mod(not_nn(input3), input3)))
 
-			loss += F.mse_loss(input2, and_nn(im_mod(top[0], input1)))*2
-			loss += F.mse_loss(input2, and_nn(im_mod(top[0], input2)))*2
-			loss += F.mse_loss(input2, and_nn(im_mod(top[0], input3)))*2
+		# A = A ⊓ T
+		loss += F.mse_loss(input1, and_nn(im_mod(input1, top[0])))*2
+		loss += F.mse_loss(input1, and_nn(im_mod(input2, top[0])))*2
+		loss += F.mse_loss(input3, and_nn(im_mod(input3, top[0])))*2
 
-			# ⊥ = A ⊓ ⊥
-			loss += F.mse_loss(bot[0], and_nn(im_mod(input1, bot[0])))*2
-			loss += F.mse_loss(bot[0], and_nn(im_mod(input2, bot[0])))*2
-			loss += F.mse_loss(bot[0], and_nn(im_mod(input3, bot[0])))*2
+		loss += F.mse_loss(input2, and_nn(im_mod(top[0], input1)))*2
+		loss += F.mse_loss(input2, and_nn(im_mod(top[0], input2)))*2
+		loss += F.mse_loss(input2, and_nn(im_mod(top[0], input3)))*2
 
-			loss += F.mse_loss(bot[0], and_nn(im_mod(bot[0], input1)))*2
-			loss += F.mse_loss(bot[0], and_nn(im_mod(bot[0], input2)))*2
-			loss += F.mse_loss(bot[0], and_nn(im_mod(bot[0], input3)))*2
+		# ⊥ = A ⊓ ⊥
+		loss += F.mse_loss(bot[0], and_nn(im_mod(input1, bot[0])))*2
+		loss += F.mse_loss(bot[0], and_nn(im_mod(input2, bot[0])))*2
+		loss += F.mse_loss(bot[0], and_nn(im_mod(input3, bot[0])))*2
 
-			if not frozen:
-				loss += F.mse_loss(bot[0], and_nn(im_mod(top[0], bot[0])))
+		loss += F.mse_loss(bot[0], and_nn(im_mod(bot[0], input1)))*2
+		loss += F.mse_loss(bot[0], and_nn(im_mod(bot[0], input2)))*2
+		loss += F.mse_loss(bot[0], and_nn(im_mod(bot[0], input3)))*2
+
+		loss += F.mse_loss(bot[0], and_nn(im_mod(top[0], bot[0])))
 
 		#  A ⊑ T -> True
-		loss += (1 - T.sigmoid(sub_nn(im_mod(input1, top[0])))).sum()
-		loss += (1 - T.sigmoid(sub_nn(im_mod(input2, top[0])))).sum()
-		loss += (1 - T.sigmoid(sub_nn(im_mod(input3, top[0])))).sum()
-		if not frozen:
-			loss += (1 - T.sigmoid(sub_nn(im_mod(bot[0], top[0])))).sum()
+		
+		one = torch.tensor([1.])
+		loss += F.binary_cross_entropy_with_logits(sub_nn(im_mod(input1, top[0])), one, reduction='mean')
+		loss += F.binary_cross_entropy_with_logits(sub_nn(im_mod(input3, top[0])), one, reduction='mean')
+		loss += F.binary_cross_entropy_with_logits(sub_nn(im_mod(input2, top[0])), one, reduction='mean')
+		loss += F.binary_cross_entropy_with_logits(sub_nn(im_mod(bot[0], top[0])), one, reduction='mean')
 
 		#  ⊥ ⊑ A -> True
-		loss += (1 - T.sigmoid(sub_nn(im_mod(bot[0], input1)))).sum()
-		loss += (1 - T.sigmoid(sub_nn(im_mod(bot[0], input2)))).sum()
-		loss += (1 - T.sigmoid(sub_nn(im_mod(bot[0], input3)))).sum()
-
-		#  A ⊑ A -> True
-		loss += (1 - T.sigmoid(sub_nn(im_mod(input1, input1)))).sum()
-		loss += (1 - T.sigmoid(sub_nn(im_mod(input2, input2)))).sum()
-		loss += (1 - T.sigmoid(sub_nn(im_mod(input3, input3)))).sum()
-
-		#  A ⊑ ¬A -> False
-		loss+= T.sigmoid(sub_nn(im_mod(input3, not_nn(input3)))).sum()
-		loss+= T.sigmoid(sub_nn(im_mod(input2, not_nn(input2)))).sum()
-		loss+= T.sigmoid(sub_nn(im_mod(input1, not_nn(input1)))).sum()
+		loss += F.binary_cross_entropy_with_logits(sub_nn(im_mod(bot[0], input1)), one, reduction='mean')
+		loss += F.binary_cross_entropy_with_logits(sub_nn(im_mod(bot[0], input2)), one, reduction='mean')
+		loss += F.binary_cross_entropy_with_logits(sub_nn(im_mod(bot[0], input3)), one, reduction='mean')
 
 		#  ⊥ = ¬T  
-		if not frozen:
-			loss += F.l1_loss(bot[0], not_nn(top[0]))
+		loss += F.l1_loss(bot[0], not_nn(top[0]))
 		#  T = ¬⊥
-			loss += F.l1_loss(top[0], not_nn(bot[0]))
+		loss += F.l1_loss(top[0], not_nn(bot[0]))
 
 		#  A = ¬(¬(A))
 		loss += F.mse_loss(input1, not_nn(not_nn(input1)))
 		loss += F.mse_loss(input2, not_nn(not_nn(input2)))
 		loss += F.mse_loss(input3, not_nn(not_nn(input3)))
 
-		if not frozen:
-			loss += F.l1_loss(T.matmul(not_nn.weight, not_nn.weight), T.eye(not_nn.weight.shape[1])) * 40
+		loss += F.l1_loss(T.matmul(not_nn.weight, not_nn.weight), T.eye(not_nn.weight.shape[1])) * 40
 		
 		#  ⊥ ⊑ ⊥ -> True
-		if not frozen:
-			loss += (1 - T.sigmoid(sub_nn(im_mod(bot[0], bot[0])))).sum()
+		loss += F.binary_cross_entropy_with_logits(sub_nn(im_mod(bot[0], bot[0])), one, reduction='mean')
 
 		return loss
 	
@@ -272,7 +258,7 @@ def batch_stats_mod(Y, y, **other):
 
 
 def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward=False, detach=True,
-				   identities_weight=0, frozen = False, one_onto=False):
+				   identities_weight=0):
 	if indices is None: indices = list(range(len(X)))
 	emb = [encoders[onto_idx[i]] for i in indices]
 	X_ = [core_mod(X[i]) for i in indices]
@@ -281,10 +267,9 @@ def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward
 	main_loss = F.binary_cross_entropy_with_logits(Y_, y_, reduction='mean')
 
 	if identities_weight > 0:
-		identity_loss = reasoner.all_identities(encoders, frozen, one_onto) * identities_weight
+		identity_loss = reasoner.all_identities(encoders) * identities_weight
 	else:
 		identity_loss = T.tensor(0.0, device=Y_.device, requires_grad=False)
-
 
 	loss = main_loss + identity_loss
 
@@ -301,7 +286,7 @@ def eval_batch_mod(reasoner, encoders, X, y, onto_idx, indices=None, *, backward
 
 def train_mod(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_size=32, logger=None, validate=True,
 			  optimizer=T.optim.AdamW, lr_reasoner=0.0001, lr_encoder=0.0002, freeze_reasoner=False, run_name='train',
-			    identities_weight=0, identitity_weight_decay=0, one_onto=False) :
+			    identities_weight=0, identitity_weight_decay=0) :
 	idx_tr, X_tr, y_tr = data_tr
 	idx_vl, X_vl, y_vl = data_vl if data_vl is not None else data_tr
 	if logger is None:
@@ -326,7 +311,7 @@ def train_mod(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_siz
 			for optim in optimizers:
 				optim.zero_grad()
 			loss, yb, Yb = eval_batch_mod(reasoner, encoders, X_tr, y_tr, idx_tr, idxs, backward=epoch_idx > 0,
-				identities_weight=identities_weight, frozen = freeze_reasoner, one_onto=one_onto)
+				identities_weight=identities_weight)
 			for optim in optimizers:
 				optim.step()
 			logger.step(loss)
@@ -343,5 +328,5 @@ def train_mod(data_tr, data_vl, reasoner, encoders, *, epoch_count=15, batch_siz
 	if freeze_reasoner:
 		unfreeze(reasoner)
 
-	return yb, Yb
-	# return logger
+	# return yb, Yb
+	return logger
