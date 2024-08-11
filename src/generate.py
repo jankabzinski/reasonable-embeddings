@@ -245,9 +245,31 @@ def deserialize_dataset(data):
 		deserialize_queries(data['test_queries']),
 	)
 
+def deserialize_test_dataset(data):
+	return (
+		deserialize_ontos(data['test_ontos']),
+		deserialize_queries(data['train_queries']),
+		deserialize_queries(data['valid_queries']),
+		deserialize_queries(data['test_queries']),
+	)
+
+def serialize_test_dataset(dataset):
+	test_onto, train_queries, valid_queries, test_queries = dataset
+	return dict(
+		test_ontos=serialize_ontos(test_onto),
+		train_queries=serialize_queries(train_queries),
+		valid_queries=serialize_queries(valid_queries),
+		test_queries=serialize_queries(test_queries),
+	)
+
 def save_dataset(dataset, *, path):
 	with open(path, 'w') as f:
 		json.dump(serialize_dataset(dataset), f, indent=2)
+
+def save_test_dataset(dataset, path):
+	with open(path, 'w') as f:
+		json.dump(serialize_test_dataset(dataset), f, indent=2)
+
 
 def load_dataset(path):
 	if path.endswith('.pkl'):
@@ -256,6 +278,15 @@ def load_dataset(path):
 	if path.endswith('.json'):
 		with open(path) as f:
 			return deserialize_dataset(json.load(f))
+	assert False, 'Bad extension'
+
+def load_test_dataset(path):
+	if path.endswith('.pkl'):
+		with open(path, 'rb') as f:
+			return pickle.load(f)
+	if path.endswith('.json'):
+		with open(path) as f:
+			return deserialize_test_dataset(json.load(f))
 	assert False, 'Bad extension'
 
 def split_dataset(data, group_col, stratify_col, seed, test_size=0.15, val_size=0.15):
@@ -388,11 +419,13 @@ def make_dataset(onto, fact, rng, n_queries, min_query_size, max_query_size):
         if num > max_query_size or num < min_query_size or axiom_core in qset: 
             continue
         answer = fact.check_axiom(axiom)
+
+        #print(axiom_core, answer, fact.check_axiom(axiom), fact.check_axiom(axiom_core))
         queries.append(axiom_core); answers.append(int(answer)); qset.add(axiom_core)
 
     return queries, answers
 
-def reduce_dataset(data, onto_number ,target_size, pattern_data, tolerance=0.00001):
+def reduce_dataset(data, onto_number, target_size, pattern_data, tolerance=0.00001):
     pdf = pd.DataFrame({'x': pattern_data[1], 'y': pattern_data[2], 'idx': pattern_data[0]})
     df = pd.DataFrame({'x': data[1], 'y': data[2], 'idx': data[0]})
     
@@ -434,7 +467,7 @@ def reduce_dataset(data, onto_number ,target_size, pattern_data, tolerance=0.000
 
 
 if __name__ == '__main__':
-	seed = 42
+	seed = 2022
 	rng = np.random.default_rng(seed)
 	generate_and_split_dataset(rng=rng, train_ontos=40, test_ontos=20,
 		min_concepts=80, max_concepts=120, min_roles=1, max_roles=5, n_axioms=200, n_queries=2000,
